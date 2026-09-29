@@ -1,0 +1,25 @@
+{
+  "name": "Neon Racer",
+  "short_name": "NeonRacer",
+  "description": "Cyberpunk racing game with combat, boss fights, car skins, and missions.",
+  "start_url": "/neon-racer/",
+  "scope": "/neon-racer/",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#050714",
+  "theme_color": "#00ffff",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
