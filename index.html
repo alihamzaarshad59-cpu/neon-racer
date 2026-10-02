@@ -1011,6 +1011,23 @@
       keyRight = false;
     });
 
+    function returnToMainMenu() {
+      currentState = STATE_MENU;
+      resetSteering();
+      boss = null;
+      trafficCars = [];
+      playerBullets = [];
+      enemyBullets = [];
+      coins = [];
+      powerups = [];
+      particles = [];
+      floatingTexts = [];
+      player.x = roadX + roadW / 2;
+      player.targetX = player.x;
+      player.y = screenHeight * 0.78;
+      soundCoin();
+    }
+
     function handleActionInput(clientX, clientY) {
       if (currentState === STATE_MENU) {
         const centerX = screenWidth / 2;
@@ -1080,6 +1097,24 @@
       } else if (currentState === STATE_GAMEOVER) {
         const timeSinceOver = performance.now() - gameOverTimestamp;
         if (timeSinceOver >= 400) {
+          const centerX = screenWidth / 2;
+          const centerY = screenHeight / 2;
+
+          // MAIN MENU Button at centerY + 166 (width ~190, height ~50)
+          const menuBtnY = centerY + 166;
+          if (Math.abs(clientX - centerX) <= 105 && Math.abs(clientY - menuBtnY) <= 26) {
+            returnToMainMenu();
+            return;
+          }
+
+          // RETRY Button at centerY + 108 (width ~190, height ~50)
+          const retryBtnY = centerY + 108;
+          if (Math.abs(clientX - centerX) <= 105 && Math.abs(clientY - retryBtnY) <= 26) {
+            startGame();
+            return;
+          }
+
+          // Outside tap defaults to startGame
           startGame();
         }
       }
@@ -2824,8 +2859,9 @@
       const pulse = ready ? 1 + 0.05 * Math.sin(gameTime * 5) : 1;
       const btnW = 190 * pulse;
       const btnH = 50 * pulse;
-      const btnY = centerY + 108;
 
+      // 1. RETRY Button at centerY + 108
+      const retryBtnY = centerY + 108;
       ctx.save();
       ctx.shadowColor = ready ? '#ff007f' : '#555555';
       ctx.shadowBlur = ready ? 22 : 4;
@@ -2834,7 +2870,7 @@
       ctx.lineWidth = 2.5;
 
       ctx.beginPath();
-      ctx.roundRect(centerX - btnW / 2, btnY - btnH / 2, btnW, btnH, 25);
+      ctx.roundRect(centerX - btnW / 2, retryBtnY - btnH / 2, btnW, btnH, 25);
       ctx.fill();
       ctx.stroke();
 
@@ -2842,7 +2878,28 @@
       ctx.font = 'bold 19px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('RETRY', centerX, btnY);
+      ctx.fillText('RETRY', centerX, retryBtnY);
+      ctx.restore();
+
+      // 2. MAIN MENU Button at centerY + 166
+      const menuBtnY = centerY + 166;
+      ctx.save();
+      ctx.shadowColor = ready ? '#00ffff' : '#555555';
+      ctx.shadowBlur = ready ? 22 : 4;
+      ctx.fillStyle = ready ? '#051829' : '#1a1a24';
+      ctx.strokeStyle = ready ? '#00ffff' : '#666666';
+      ctx.lineWidth = 2.5;
+
+      ctx.beginPath();
+      ctx.roundRect(centerX - btnW / 2, menuBtnY - btnH / 2, btnW, btnH, 25);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = ready ? '#00ffff' : '#888888';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🏠 MAIN MENU', centerX, menuBtnY);
       ctx.restore();
     }
 
