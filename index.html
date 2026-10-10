@@ -238,6 +238,142 @@ let clutchSaveToastTimer = 0;
 let gameOverHookMain = '';
 let gameOverHookSub = '';
 
+// SCREEN SHAKE (visual only - never affects collisions)
+let shakeIntensity = 0, shakeDecay = 0.88, shakeX = 0, shakeY = 0;
+function triggerScreenShake(intensity, duration) {
+  shakeIntensity = Math.max(shakeIntensity, intensity);
+}
+function updateScreenShake() {
+  if (shakeIntensity > 0) {
+    shakeX = (Math.random() - 0.5) * shakeIntensity;
+    shakeY = (Math.random() - 0.5) * shakeIntensity;
+    shakeIntensity *= shakeDecay;
+    if (shakeIntensity < 0.3) { shakeIntensity = 0; shakeX = 0; shakeY = 0; }
+  } else if (shakeX !== 0 || shakeY !== 0) { shakeX = 0; shakeY = 0; }
+}
+function clearScreenShake() { shakeIntensity = 0; shakeX = 0; shakeY = 0; }
+
+// KILL STREAK (rapid kills within 1.5s - separate from long-term combo)
+let killStreakCount = 0, killStreakTimer = 0, lastKillTime = 0;
+function showStreakText(text, color) {
+  floatingTexts.push({ text: text, x: screenWidth / 2, y: screenHeight * 0.4, vy: 40, alpha: 1, decay: 0.67, color: color, size: 28, blur: 20 });
+}
+function registerKillStreak() {
+  killStreakCount++;
+  killStreakTimer = 1.5;
+  lastKillTime = gameTime;
+  if (killStreakCount === 2) showStreakText('DOUBLE KILL!', '#39ff14');
+  else if (killStreakCount === 3) showStreakText('TRIPLE KILL!', '#00ffff');
+  else if (killStreakCount === 5) showStreakText('RAMPAGE!', '#ffd700');
+  else if (killStreakCount === 10) showStreakText('UNSTOPPABLE!', '#ff7700');
+  else if (killStreakCount === 20) showStreakText('GODLIKE!', '#ff0055');
+  else if (killStreakCount === 30) showStreakText('LEGENDARY!', getRainbowColor());
+}
+
+// MILESTONES
+let nextMilestone = 5000, milestonesReached = 0, highestMilestoneEver = 0;
+try { const hm = parseInt(localStorage.getItem('neon_racer_highest_milestone') || '0', 10); if (!isNaN(hm)) highestMilestoneEver = hm; } catch (e) {}
+let milestonePopup = { score: 0, reward: 0, timer: 0, active: false };
+const MILESTONE_REWARDS = {
+  5000: 50,
+  10000: 100,
+  15000: 150,
+  20000: 200,
+  25000: 250,
+  30000: 300,
+  35000: 400,
+  40000: 500,
+  45000: 750,
+  50000: 1000
+  // 60000+: 500 coins each
+};
+function getMilestoneReward(m) {
+  if (MILESTONE_REWARDS[m]) return MILESTONE_REWARDS[m];
+  if (m >= 50000) return 500;
+  return 100;
+}
+function showMilestonePopup(sc, reward) {
+  milestonePopup = { score: sc, reward: reward, timer: 2.5, active: true };
+}
+function checkMilestones() {
+  if (score >= nextMilestone) {
+    const reward = getMilestoneReward(nextMilestone);
+    totalCoins += reward;
+    saveCoins();
+    milestonesReached++;
+    if (nextMilestone > highestMilestoneEver) {
+      highestMilestoneEver = nextMilestone;
+      try { localStorage.setItem('neon_racer_highest_milestone', highestMilestoneEver.toString()); } catch (e) {}
+    }
+    showMilestonePopup(nextMilestone, reward);
+    soundMissionComplete();
+    triggerScreenShake(12, 0.5);
+    for (let p = 0; p < 60; p++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spd = Math.random() * 400 + 100;
+      particles.push({
+        x: screenWidth / 2,
+        y: screenHeight / 2,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd,
+        size: Math.random() * 5 + 3,
+        color: Math.random() < 0.5 ? '#ffd700' : getRainbowColor(p * 10),
+        alpha: 1,
+        decay: 1.2
+      });
+    }
+    for (let i = 0; i < 5; i++) {
+      coins.push({
+        x: roadX + Math.floor(Math.random() * laneCount) * laneWidth + laneWidth / 2,
+        y: -40 - i * 60,
+        radius: 13,
+        pulseOffset: Math.random() * 6
+      });
+    }
+    nextMilestone += 5000;
+  }
+}
+
+// TUTORIAL (first-time only)
+let tutorialDone = false;
+try { tutorialDone = localStorage.getItem('neon_racer_tutorial_done') === 'true'; } catch (e) {}
+let tutorialActive = false, tutorialStep = 0;
+const TUTORIAL_STEPS = [
+  { icon: '🎮', title: 'WELCOME', lines: ["Let's learn to play in 20 seconds", '', 'Tap NEXT to continue'] },
+  { icon: '👈👉', title: 'STEERING', lines: ['Tap LEFT half of screen = move left', 'Tap RIGHT half = move right'] },
+  { icon: '💥', title: 'AUTO-FIRE', lines: ['Your car shoots automatically.', 'Focus on dodging and steering!'] },
+  { icon: '🪙', title: 'COLLECT & DESTROY', lines: ['Collect coins 🪙 for upgrades.', 'Destroy red enemy cars for score.'] },
+  { icon: '🔥', title: 'NITRO BOOST', lines: ['Tap the 🔥 button (bottom-right) for', 'a 1.5x speed boost!'] },
+  { icon: '👹', title: 'BOSSES & MISSIONS', lines: ['Bosses appear every 5,000 score.', 'Complete missions for bonus points!'] },
+  { icon: '🏁', title: 'READY TO RACE!', lines: ['Good luck! Set a new high score!'] }
+];
+function tutorialLayout() {
+  const cw = Math.min(screenWidth * 0.9, 340), chh = 320, midX = screenWidth / 2, midY = screenHeight / 2;
+  return { cw: cw, chh: chh, midX: midX, cx0: midX - cw / 2, cy0: midY - chh / 2 };
+}
+function markTutorialDone() {
+  tutorialDone = true;
+  tutorialActive = false;
+  try { localStorage.setItem('neon_racer_tutorial_done', 'true'); } catch (e) {}
+  resetSteering();
+  if (currentState === STATE_PLAYING) startEngineSound();
+}
+function tutorialNext() {
+  soundCoin();
+  if (tutorialStep < TUTORIAL_STEPS.length - 1) tutorialStep++;
+  else markTutorialDone();
+}
+function handleTutorialClick(cx, cy) {
+  const L = tutorialLayout();
+  const last = tutorialStep >= TUTORIAL_STEPS.length - 1;
+  if (!last && Math.abs(cx - (L.cx0 + L.cw - 42)) <= 38 && Math.abs(cy - (L.cy0 + 22)) <= 20) { soundCoin(); markTutorialDone(); return; }
+  if (Math.abs(cx - L.midX) <= 95 && Math.abs(cy - (L.cy0 + L.chh - 62)) <= 26) { tutorialNext(); return; }
+}
+function fitFont(text, maxW, px, weight) {
+  let s = px;
+  do { ctx.font = weight + ' ' + s + 'px sans-serif'; s -= 0.5; } while (ctx.measureText(text).width > maxW && s > 8);
+}
+
 // SETTINGS
 const STEER_SPEEDS = { slow: 500, normal: 640, fast: 800 };
 let sensitivity = 'normal';
@@ -342,6 +478,7 @@ function activateNitro() {
   if (currentState !== STATE_PLAYING || nitroTimer > 0 || nitroCooldown > 0) return;
   nitroDuration = 3 + (upgrades.nitrous || 0) * 2; nitroTimer = nitroDuration;
   soundNitro();
+  triggerScreenShake(4, 0.2);
   floatingTexts.push({ text: '🔥 NITRO BOOST!', x: player.x, y: player.y - 50, vy: 50, alpha: 1, decay: 1.8, color: '#00ffff' });
 }
 
@@ -366,31 +503,11 @@ function checkComboTierUp() {
   if (mult > (lifetimeStats.highestCombo || 0)) { lifetimeStats.highestCombo = mult; saveStats(); }
   if (mult > lastComboTier) {
     soundPowerup();
+    triggerScreenShake(6, 0.3);
     floatingTexts.push({ text: 'COMBO x' + mult + '!', x: screenWidth / 2, y: screenHeight * 0.24, vy: 45, alpha: 1, decay: 2.0, color: getComboColor(mult) });
   }
   lastComboTier = mult;
   checkAchievements();
-}
-
-// GHOST
-let ghostEnabled = true;
-try { const sge = localStorage.getItem('neon_racer_ghost_enabled'); if (sge !== null) ghostEnabled = (sge === 'true'); } catch (e) {}
-let currentGhost = null, recordedGhostPositions = [], nextGhostSampleTimer = 0;
-try { const gd = localStorage.getItem('neon_racer_ghost'); if (gd) currentGhost = JSON.parse(gd); } catch (e) {}
-function getGhostStateAtTime(t) {
-  if (!currentGhost || !currentGhost.positions || !currentGhost.positions.length || t > currentGhost.duration) return null;
-  if ((currentGhost.difficulty || 'easy') !== currentDifficulty) return null;
-  const pts = currentGhost.positions;
-  if (t <= pts[0].time) return pts[0];
-  if (t >= pts[pts.length - 1].time) return pts[pts.length - 1];
-  let low = 0, high = pts.length - 1;
-  while (low <= high) {
-    const mid = (low + high) >> 1;
-    if (pts[mid].time < t) low = mid + 1; else high = mid - 1;
-  }
-  const i = Math.max(1, low), p0 = pts[i - 1], p1 = pts[i] || p0, span = p1.time - p0.time;
-  const r = span > 0 ? (t - p0.time) / span : 0;
-  return { x: p0.x + (p1.x - p0.x) * r, y: p0.y + (p1.y - p0.y) * r, score: Math.floor(p0.score + ((p1.score || p0.score) - p0.score) * r) };
 }
 
 // STATS
@@ -410,6 +527,9 @@ try {
   if (sbd) bestByDiff = Object.assign(bestByDiff, JSON.parse(sbd));
   else bestByDiff.easy = bestScore;
 } catch (e) { bestByDiff.easy = bestScore; }
+
+// cleanup of the removed ghost system data (harmless if missing)
+try { localStorage.removeItem('neon_racer_ghost'); localStorage.removeItem('neon_racer_ghost_enabled'); } catch (e) {}
 
 function saveStats() {
   try {
@@ -703,6 +823,7 @@ function spawnBoss() {
 
 function canTriggerLastChance() { return !game.lastChanceUsed && gameMode !== 'elimination'; }
 function handleLethalHit() {
+  triggerScreenShake(8, 0.3);
   if (lastChanceActive) {
     lastChanceActive = false;
     game.slowMo = 1.0;
@@ -763,6 +884,7 @@ function updateBoss(dt) {
           if (handleLethalHit()) return;
         } else {
           playerHP -= 1; screenDamageFlash = 0.45; screenDamageFlashColor = 'rgba(176, 38, 255, 0.5)'; soundPlayerHit();
+          triggerScreenShake(8, 0.3);
           if (playerHP <= 0) { if (handleLethalHit()) return; }
         }
       }
@@ -800,6 +922,7 @@ function updateBoss(dt) {
             if (handleLethalHit()) return;
           } else {
             playerHP -= 1; screenDamageFlash = 0.45; screenDamageFlashColor = 'rgba(255, 220, 0, 0.5)'; soundPlayerHit();
+            triggerScreenShake(8, 0.3);
             if (playerHP <= 0) { if (handleLethalHit()) return; }
           }
         }
@@ -857,6 +980,7 @@ function updateBoss(dt) {
                 if (handleLethalHit()) return;
               } else {
                 playerHP -= 1; screenDamageFlash = 0.45; screenDamageFlashColor = 'rgba(255, 220, 0, 0.5)'; soundPlayerHit();
+                triggerScreenShake(8, 0.3);
                 if (playerHP <= 0) { if (handleLethalHit()) return; }
               }
             }
@@ -892,6 +1016,7 @@ function defeatBoss() {
   totalBossesDefeated += 1;
   playerHP = getRunMaxHP();
   if (wasMega) {
+    triggerScreenShake(16, 0.7);
     const megaPts = diffScore(2000);
     score += megaPts;
     totalCoins += 10;
@@ -909,6 +1034,7 @@ function defeatBoss() {
       particles.push({ x: boss.x, y: boss.y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, size: Math.random() * 8 + 3, color: col, alpha: 1, decay: 1.1 });
     }
   } else {
+    triggerScreenShake(10, 0.4);
     const bossPts = diffScore(500);
     score += bossPts;
     lifetimeStats.bossesDefeated = (lifetimeStats.bossesDefeated || 0) + 1;
@@ -1007,6 +1133,7 @@ function pauseGame() {
     currentState = STATE_PAUSED;
     resetSteering();
     stopEngineSound();
+    clearScreenShake();
     soundCoin();
   }
 }
@@ -1023,6 +1150,9 @@ function returnToMainMenu() {
   stopEngineSound();
   game.slowMo = 1.0;
   lastChanceActive = false;
+  tutorialActive = false;
+  clearScreenShake();
+  milestonePopup.active = false;
   boss = null; trafficCars = []; playerBullets = []; enemyBullets = []; coins = []; powerups = []; particles = []; floatingTexts = [];
   game.nearMissPopups = [];
   nitroTimer = 0; nitroCooldown = 0;
@@ -1034,6 +1164,10 @@ function returnToMainMenu() {
 
 window.addEventListener('keydown', e => {
   initAudio();
+  if (tutorialActive) {
+    if (e.key === ' ' || e.key === 'Enter') tutorialNext();
+    e.preventDefault(); return;
+  }
   if (rewardPopup && currentState === STATE_MENU) {
     if (e.key === ' ' || e.key === 'Enter') claimDailyReward();
     e.preventDefault(); return;
@@ -1061,6 +1195,7 @@ canvas.addEventListener('touchstart', e => {
   e.preventDefault(); initAudio();
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i];
+    if (tutorialActive) { handleTutorialClick(t.clientX, t.clientY); continue; }
     if (currentState === STATE_PLAYING) {
       const px = screenWidth - 58, py = 78, mx = px - 48;
       if (t.clientX >= px && t.clientX <= px + 40 && t.clientY >= py && t.clientY <= py + 40) { pauseGame(); return; }
@@ -1106,6 +1241,7 @@ canvas.addEventListener('wheel', e => { if (currentState === STATE_UPGRADES) { u
 
 canvas.addEventListener('mousedown', e => {
   initAudio();
+  if (tutorialActive) { handleTutorialClick(e.clientX, e.clientY); return; }
   if (currentState === STATE_PLAYING) {
     const px = screenWidth - 58, py = 78, mx = px - 48;
     if (e.clientX >= px && e.clientX <= px + 40 && e.clientY >= py && e.clientY <= py + 40) { pauseGame(); return; }
@@ -1118,10 +1254,11 @@ canvas.addEventListener('mousedown', e => {
 window.addEventListener('mouseup', () => { keyLeft = false; keyRight = false; });
 
 // Main menu is vertically shifted up a little on short screens so every button stays visible
-function menuShift() { return Math.min(0, screenHeight / 2 - 308); }
+function menuShift() { return Math.min(0, screenHeight / 2 - 276); }
 
 function handleActionInput(cx, cy) {
   const midX = screenWidth / 2, midY = screenHeight / 2;
+  if (tutorialActive) { handleTutorialClick(cx, cy); return; }
   if (rewardPopup && currentState === STATE_MENU) {
     if (Math.abs(cx - midX) <= 100 && Math.abs(cy - (midY + 105)) <= 26) claimDailyReward();
     return;
@@ -1136,11 +1273,6 @@ function handleActionInput(cx, cy) {
     if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (my + 170)) <= 17) { currentState = STATE_DIFFICULTY; soundPowerup(); return; }
     if (Math.abs(cx - midX) <= 110 && Math.abs(cy - (my + 208)) <= 17) { currentState = STATE_ACHIEVEMENTS; soundPowerup(); return; }
     if (Math.abs(cx - midX) <= 110 && Math.abs(cy - (my + 246)) <= 17) { currentState = STATE_SETTINGS; soundPowerup(); return; }
-    const grY = my + 284;
-    if (cy >= grY - 16 && cy <= grY + 16) {
-      if (cx >= midX - 105 && cx <= midX - 10) { ghostEnabled = !ghostEnabled; try { localStorage.setItem('neon_racer_ghost_enabled', ghostEnabled ? 'true' : 'false'); } catch (e) {} soundCoin(); return; }
-      if (cx >= midX + 10 && cx <= midX + 105) { currentGhost = null; try { localStorage.removeItem('neon_racer_ghost'); } catch (e) {} soundEnemyExplosion(); showToast('GHOST CLEARED', '#ff0055'); return; }
-    }
   } else if (currentState === STATE_SETTINGS) {
     if (cx >= 16 && cx <= 110 && cy >= 20 && cy <= 68) { currentState = STATE_MENU; soundCoin(); return; }
     const sensKeys = ['slow', 'normal', 'fast'];
@@ -1161,6 +1293,13 @@ function handleActionInput(cx, cy) {
         }
       }
     });
+    if (Math.abs(cx - midX) <= 105 && Math.abs(cy - 500) <= 19) {
+      tutorialDone = false;
+      try { localStorage.removeItem('neon_racer_tutorial_done'); } catch (e) {}
+      soundCoin();
+      showToast('Tutorial will show next game', '#00ffff');
+      return;
+    }
   } else if (currentState === STATE_MODE) {
     if (cx >= 16 && cx <= 110 && cy >= 20 && cy <= 68) { currentState = STATE_MENU; soundCoin(); return; }
     const cardW = Math.min(screenWidth * 0.88, 380), cardH = 78, startY = 100;
@@ -1231,8 +1370,14 @@ function startGame() {
   currentSpeed = 420 * getSpeedMult();
   playerHP = getRunMaxHP(); rapidFireTimer = 0; shieldTimer = 0; screenDamageFlash = 0; playerShootTimer = 0; playerFrozenTimer = 0;
   nitroTimer = 0; nitroCooldown = 0; driftScore = 0; driftStreak = 0; driftCombo = false; driftActive = false; musicTimer = 0;
-  comboKills = 0; lastComboTier = 1; recordedGhostPositions = []; nextGhostSampleTimer = 0;
+  comboKills = 0; lastComboTier = 1;
   lastBossThreshold = 0; boss = null; totalBossesDefeated = 0;
+
+  // milestones, kill streak, shake reset
+  nextMilestone = 5000; milestonesReached = 0;
+  milestonePopup = { score: 0, reward: 0, timer: 0, active: false };
+  killStreakCount = 0; killStreakTimer = 0; lastKillTime = 0;
+  clearScreenShake();
 
   game.slowMo = 1.0;
   game.lastChanceUsed = false;
@@ -1256,6 +1401,15 @@ function startGame() {
   player.x = roadX + roadW / 2; player.vx = 0; player.tilt = 0; player.y = screenHeight - player.height - 40;
   lifetimeStats.totalGames += 1; saveStats(); initWeather(); checkAchievements(); assignRandomMission(); soundStart();
   startEngineSound();
+
+  // first-time tutorial (game stays paused until it is finished / skipped)
+  if (!tutorialDone) {
+    tutorialActive = true; tutorialStep = 0;
+    stopEngineSound();
+    resetSteering();
+  } else {
+    tutorialActive = false;
+  }
 }
 
 function triggerGameOver() {
@@ -1265,10 +1419,6 @@ function triggerGameOver() {
   game.slowMo = 1.0;
   lastChanceActive = false;
   if (timeUp) soundMissionComplete(); else soundCrash();
-  if (gameMode === 'classic' && score > bestDiffBeforeRun && recordedGhostPositions.length > 5) {
-    currentGhost = { score: score, positions: recordedGhostPositions, duration: gameTime, difficulty: currentDifficulty };
-    try { localStorage.setItem('neon_racer_ghost', JSON.stringify(currentGhost)); } catch (e) {}
-  }
 
   // ONE MORE RUN HOOK (compared against your best on this difficulty)
   const prevBest = bestDiffBeforeRun;
@@ -1380,10 +1530,16 @@ function applyPowerup(type) {
 // UPDATE
 function update(dt) {
   if (currentState === STATE_PAUSED) return;
+  updateScreenShake();
+  if (tutorialActive) return;
   if (toastTimer > 0) toastTimer -= dt;
   if (lastChanceToastTimer > 0) lastChanceToastTimer -= dt;
   if (clutchSaveToastTimer > 0) clutchSaveToastTimer -= dt;
   if (postClutchInvincibleTimer > 0) postClutchInvincibleTimer = Math.max(0, postClutchInvincibleTimer - dt);
+  if (milestonePopup.active) {
+    milestonePopup.timer -= dt;
+    if (milestonePopup.timer <= 0) { milestonePopup.timer = 0; milestonePopup.active = false; }
+  }
 
   if (lastChanceActive) {
     lastChanceTimer -= dt;
@@ -1418,9 +1574,10 @@ function update(dt) {
   if (nitroTimer > 0) { nitroTimer -= dt; if (nitroTimer <= 0) { nitroTimer = 0; nitroCooldown = 5; } }
   else if (nitroCooldown > 0) nitroCooldown = Math.max(0, nitroCooldown - dt);
 
-  if (gameMode === 'classic') {
-    nextGhostSampleTimer -= dt;
-    if (nextGhostSampleTimer <= 0) { nextGhostSampleTimer = 0.1; recordedGhostPositions.push({ time: gameTime, x: player.x, y: player.y, score: score }); }
+  // kill streak decay
+  if (killStreakTimer > 0) {
+    killStreakTimer -= dt;
+    if (killStreakTimer <= 0) { killStreakTimer = 0; killStreakCount = 0; }
   }
 
   checkBossSpawn(); updateBoss(dt); checkSkinUnlocks(); updateMissionProgress();
@@ -1460,6 +1617,9 @@ function update(dt) {
   else score = Math.floor((Math.floor((distanceTraveled / 30) * getWeatherScoreMultiplier()) + coinsCollected * 5) * (gameMode === 'elimination' ? 2 : 1) * dMult);
   if (score > bestScore) bestScore = score;
   roadScrollOffset = (roadScrollOffset + roadTravel) % 60;
+
+  // milestone rewards use the raw (already multiplied) score
+  checkMilestones();
 
   if (gameMode === 'timetrial' && gameTime >= TIME_TRIAL_DURATION) {
     score += 250; gameOverReason = 'time';
@@ -1519,6 +1679,7 @@ function update(dt) {
         playerHP -= 1;
         screenDamageFlash = 0.45;
         screenDamageFlashColor = isIce ? 'rgba(0, 229, 255, 0.45)' : (isMissile ? 'rgba(176, 38, 255, 0.5)' : 'rgba(255, 0, 50, 0.45)');
+        triggerScreenShake(8, 0.3);
         if (isIce) { playerFrozenTimer = 1.0; soundFreeze(); floatingTexts.push({ text: '❄️ FROZEN! 50% SPEED', x: player.x, y: player.y - 45, vy: 40, alpha: 1, decay: 1.8, color: '#00e5ff' }); }
         else soundPlayerHit();
         for (let p = 0; p < 15; p++) particles.push({ x: b.x, y: b.y, vx: (Math.random() - 0.5) * 180, vy: (Math.random() - 0.5) * 180, size: 3, color: isIce ? '#00e5ff' : (isMissile ? '#b026ff' : '#ff0055'), alpha: 1, decay: 2.5 });
@@ -1576,6 +1737,7 @@ function update(dt) {
         playerBullets.splice(j, 1);
         if ((car.hp -= 1) <= 0) {
           destroyed = true; comboKills += 1; const mult = getComboMultiplier(); checkComboTierUp();
+          registerKillStreak();
           const pts = Math.round(10 * mult * getDifficulty().scoreMult); score += pts; distanceTraveled += 300; missionEnemiesKilled += 1; lifetimeStats.totalEnemies += 1;
           soundEnemyExplosion();
           floatingTexts.push({ text: `+${pts}${mult > 1 ? (' x' + mult) : ''}`, x: car.x, y: car.y, vy: 55, alpha: 1, decay: 1.8, color: getComboColor(mult) });
@@ -1628,23 +1790,12 @@ function drawBtn(x, y, w, h, col, bg, txt, sz) {
   ctx.restore();
 }
 
-function drawGhostCar() {
-  if (!ghostEnabled || gameMode !== 'classic' || !currentGhost || (currentState !== STATE_PLAYING && currentState !== STATE_PAUSED)) return;
-  const g = getGhostStateAtTime(gameTime);
-  if (!g) return;
-  ctx.save(); ctx.globalAlpha = 0.4; ctx.translate(g.x, g.y);
-  ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2; ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 12;
-  ctx.beginPath(); ctx.roundRect(-player.width / 2, -player.height / 2, player.width, player.height, 8); ctx.stroke();
-  ctx.font = 'bold 9px sans-serif'; ctx.fillStyle = '#00ffff'; ctx.textAlign = 'center'; ctx.fillText('👻 GHOST', 0, -player.height / 2 - 6);
-  ctx.restore();
-}
-
 function drawBackground() {
   const grad = ctx.createLinearGradient(0, 0, 0, screenHeight);
   grad.addColorStop(0, currentWeather === 'night' ? '#02030a' : '#040614');
   grad.addColorStop(0.5, currentWeather === 'night' ? '#030512' : '#070b1f');
   grad.addColorStop(1, '#02040d');
-  ctx.fillStyle = grad; ctx.fillRect(0, 0, screenWidth, screenHeight);
+  ctx.fillStyle = grad; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40);
   stars.forEach(s => {
     ctx.fillStyle = `rgba(180, 220, 255, ${s.alpha * (0.7 + 0.3 * Math.sin(gameTime * s.pulseSpeed + s.pulseOffset))})`;
     ctx.fillRect(s.x, s.y, s.radius, s.radius);
@@ -1653,13 +1804,13 @@ function drawBackground() {
 
 function drawRoad() {
   ctx.save();
-  ctx.fillStyle = '#0b0f20'; ctx.fillRect(roadX, 0, roadW, screenHeight);
+  ctx.fillStyle = '#0b0f20'; ctx.fillRect(roadX, -20, roadW, screenHeight + 40);
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)'; ctx.lineWidth = 1;
   for (let y = roadScrollOffset - 60; y < screenHeight + 60; y += 40) { ctx.beginPath(); ctx.moveTo(roadX, y); ctx.lineTo(roadX + roadW, y); ctx.stroke(); }
   ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 18; ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.moveTo(roadX, 0); ctx.lineTo(roadX, screenHeight); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(roadX, -20); ctx.lineTo(roadX, screenHeight + 20); ctx.stroke();
   ctx.shadowColor = '#ff007f'; ctx.shadowBlur = 18; ctx.strokeStyle = '#ff007f'; ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.moveTo(roadX + roadW, 0); ctx.lineTo(roadX + roadW, screenHeight); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(roadX + roadW, -20); ctx.lineTo(roadX + roadW, screenHeight + 20); ctx.stroke();
   ctx.shadowColor = '#80d4ff'; ctx.shadowBlur = 8; ctx.strokeStyle = 'rgba(128, 212, 255, 0.45)';
   ctx.lineWidth = laneCount > 3 ? 1.8 : 2.5; ctx.setLineDash([32, 28]); ctx.lineDashOffset = -roadScrollOffset;
   for (let i = 1; i <= laneCount - 1; i++) { const lx = roadX + i * laneWidth; ctx.beginPath(); ctx.moveTo(lx, -60); ctx.lineTo(lx, screenHeight + 60); ctx.stroke(); }
@@ -1689,11 +1840,11 @@ function drawWeatherOverlay() {
   }
   if (currentWeather === 'fog' || prevWeather === 'fog') {
     const a = (currentWeather === 'fog' ? weatherTransition : (1 - weatherTransition)) * 0.3;
-    if (a > 0.01) { ctx.fillStyle = `rgba(170, 190, 210, ${a})`; ctx.fillRect(0, 0, screenWidth, screenHeight); }
+    if (a > 0.01) { ctx.fillStyle = `rgba(170, 190, 210, ${a})`; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40); }
   }
   if (currentWeather === 'night' || prevWeather === 'night') {
     const a = (currentWeather === 'night' ? weatherTransition : (1 - weatherTransition)) * 0.38;
-    if (a > 0.01) { ctx.fillStyle = `rgba(3, 4, 15, ${a})`; ctx.fillRect(0, 0, screenWidth, screenHeight); }
+    if (a > 0.01) { ctx.fillStyle = `rgba(3, 4, 15, ${a})`; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40); }
   }
   ctx.restore();
 }
@@ -1835,13 +1986,68 @@ function drawNitroButton() {
   ctx.restore();
 }
 
+function drawMilestoneBar() {
+  if (boss) return;
+  if (currentState !== STATE_PLAYING && currentState !== STATE_PAUSED) return;
+  const bw = Math.min(200, screenWidth * 0.52), bh = 6, bx = screenWidth / 2 - bw / 2, by = 64;
+  const prevM = nextMilestone - 5000;
+  const frac = Math.max(0, Math.min(1, (score - prevM) / 5000));
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 9.5px sans-serif'; ctx.fillStyle = '#ffd700'; ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 6;
+  ctx.fillText('NEXT: ' + nextMilestone, screenWidth / 2, 58);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 3); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,215,0,0.35)'; ctx.lineWidth = 1; ctx.stroke();
+  if (frac > 0) {
+    const g = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+    g.addColorStop(0, '#b8860b'); g.addColorStop(0.5, '#ffd700'); g.addColorStop(1, '#fff3a0');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.roundRect(bx, by, Math.max(bh, bw * frac), bh, 3); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawMilestonePopup() {
+  if (!milestonePopup.active) return;
+  const t = milestonePopup.timer, el = 2.5 - t;
+  const slide = Math.min(1, el / 0.3), ease = 1 - Math.pow(1 - slide, 3);
+  const a = t < 0.5 ? Math.max(0, t / 0.5) : 1;
+  const w = Math.min(280, screenWidth * 0.9), h = 140;
+  const x = screenWidth / 2 - w / 2, y = screenHeight * 0.36 - h / 2 - (1 - ease) * 90;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.shadowColor = getRainbowColor(); ctx.shadowBlur = 24;
+  const bgG = ctx.createLinearGradient(0, y, 0, y + h);
+  bgG.addColorStop(0, '#3b2f0a'); bgG.addColorStop(1, '#1a1505');
+  ctx.fillStyle = bgG;
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 16); ctx.fill();
+  const rg = ctx.createLinearGradient(x, y, x + w, y + h);
+  rg.addColorStop(0, getRainbowColor(0)); rg.addColorStop(0.33, getRainbowColor(90));
+  rg.addColorStop(0.66, getRainbowColor(180)); rg.addColorStop(1, getRainbowColor(270));
+  ctx.strokeStyle = rg; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 16); ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 16; ctx.fillStyle = '#ffd700';
+  fitFont('🎉 MILESTONE!', w - 24, 28, '900');
+  ctx.fillText('🎉 MILESTONE!', screenWidth / 2, y + 36);
+  ctx.shadowBlur = 0; ctx.fillStyle = '#ffffff'; ctx.font = 'bold 16px sans-serif';
+  ctx.fillText('SCORE: ' + milestonePopup.score, screenWidth / 2, y + 74);
+  const pulse = 22 + Math.sin(gameTime * 10) * 2.5;
+  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14; ctx.fillStyle = '#ffd700'; ctx.font = '900 ' + pulse.toFixed(1) + 'px sans-serif';
+  ctx.fillText('+' + milestonePopup.reward + ' 🪙', screenWidth / 2, y + 108);
+  ctx.restore();
+}
+
 function drawHUD() {
   ctx.save();
   if (lastChanceActive) {
     ctx.fillStyle = 'rgba(255, 0, 100, 0.15)';
-    ctx.fillRect(0, 0, screenWidth, screenHeight);
+    ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40);
   }
-  if (screenDamageFlash > 0) { ctx.fillStyle = screenDamageFlashColor; ctx.fillRect(0, 0, screenWidth, screenHeight); }
+  if (screenDamageFlash > 0) { ctx.fillStyle = screenDamageFlashColor; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40); }
   for (let i = 0; i < getRunMaxHP(); i++) {
     ctx.font = '15px sans-serif'; ctx.fillText(i < playerHP ? '❤️' : '🖤', 18 + i * 22, 30);
   }
@@ -1883,21 +2089,15 @@ function drawHUD() {
   ctx.beginPath(); ctx.roundRect(screenWidth / 2 - bw / 2, by, bw, bh, 9); ctx.fill(); ctx.stroke();
   ctx.font = 'bold 9.5px sans-serif'; ctx.fillStyle = wInfo.color; ctx.textBaseline = 'middle';
   ctx.fillText(`${wInfo.icon} ${wInfo.name}${wInfo.mult > 1 ? (' x' + wInfo.mult) : ''}`, screenWidth / 2, by + bh / 2);
+  drawMilestoneBar();
+  ctx.textBaseline = 'middle';
   if (comboKills >= 10) {
     const mult = getComboMultiplier(), col = getComboColor(mult);
-    ctx.font = '900 14px sans-serif'; ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.fillText('COMBO x' + mult, screenWidth / 2, 64);
+    ctx.font = '900 14px sans-serif'; ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.fillText('COMBO x' + mult, screenWidth / 2, 86);
   }
   if (gameMode === 'drift' && driftActive) {
     ctx.font = '900 13px sans-serif'; ctx.fillStyle = driftCombo ? '#39ff14' : '#b026ff'; ctx.textAlign = 'center';
-    ctx.fillText(driftCombo ? '🌪️ DRIFT COMBO +10/s' : '🌪️ DRIFT +5/s', screenWidth / 2, 64);
-  }
-  if (ghostEnabled && currentGhost && gameMode === 'classic') {
-    const g = getGhostStateAtTime(gameTime);
-    if (g) {
-      const ahead = score >= (g.score || 0);
-      ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = ahead ? '#39ff14' : '#ff0055'; ctx.textAlign = 'center';
-      ctx.fillText(ahead ? '🏆 BEAT YOUR GHOST' : '👻 GHOST AHEAD', screenWidth / 2, comboKills >= 10 ? 82 : 64);
-    }
+    ctx.fillText(driftCombo ? '🌪️ DRIFT COMBO +10/s' : '🌪️ DRIFT +5/s', screenWidth / 2, comboKills >= 10 ? 104 : 86);
   }
   if (lastChanceActive || lastChanceToastTimer > 0) {
     ctx.save();
@@ -1951,10 +2151,51 @@ function drawHUD() {
     ctx.fillText(np.text, np.x, np.y);
     ctx.restore();
   });
+  drawMilestonePopup();
   floatingTexts.forEach(ft => {
-    ctx.save(); ctx.globalAlpha = Math.max(ft.alpha, 0); ctx.shadowColor = ft.color; ctx.shadowBlur = 10; ctx.fillStyle = ft.color;
-    ctx.font = '900 17px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(ft.text, ft.x, ft.y); ctx.restore();
+    ctx.save(); ctx.globalAlpha = Math.max(ft.alpha, 0); ctx.shadowColor = ft.color; ctx.shadowBlur = ft.blur || 10; ctx.fillStyle = ft.color;
+    ctx.font = '900 ' + (ft.size || 17) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(ft.text, ft.x, ft.y); ctx.restore();
   });
+  ctx.restore();
+}
+
+function drawTutorial() {
+  const L = tutorialLayout(), st = TUTORIAL_STEPS[Math.min(tutorialStep, TUTORIAL_STEPS.length - 1)];
+  const last = tutorialStep >= TUTORIAL_STEPS.length - 1;
+  ctx.save();
+  ctx.fillStyle = 'rgba(2, 3, 12, 0.9)'; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40);
+  ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 24; ctx.fillStyle = '#0a0e22'; ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.roundRect(L.cx0, L.cy0, L.cw, L.chh, 18); ctx.fill(); ctx.stroke();
+  ctx.shadowBlur = 0; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  // skip button (top-right of card)
+  if (!last) {
+    drawBtn(L.cx0 + L.cw - 42, L.cy0 + 22, 64, 26, '#7a859f', '#10142a', 'SKIP', 11);
+  }
+  // icon
+  ctx.font = '48px sans-serif'; ctx.fillStyle = '#ffffff';
+  ctx.fillText(st.icon, L.midX, L.cy0 + 66);
+  // title
+  ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 12; ctx.fillStyle = '#00ffff';
+  fitFont(st.title, L.cw - 36, 22, 'bold');
+  ctx.fillText(st.title, L.midX, L.cy0 + 122);
+  ctx.shadowBlur = 0;
+  // description lines
+  ctx.fillStyle = '#ffffff';
+  st.lines.forEach((ln, i) => {
+    if (!ln) return;
+    fitFont(ln, L.cw - 30, 14, '');
+    ctx.fillText(ln, L.midX, L.cy0 + 160 + i * 24);
+  });
+  // NEXT / START button
+  drawBtn(L.midX, L.cy0 + L.chh - 62, 180, 44, '#00ffff', '#051829', last ? 'START RACING' : 'NEXT ▶', 16);
+  // progress dots
+  const n = TUTORIAL_STEPS.length, gap = 18, sx = L.midX - ((n - 1) * gap) / 2;
+  for (let i = 0; i < n; i++) {
+    ctx.beginPath();
+    ctx.fillStyle = i === tutorialStep ? '#00ffff' : '#4a5570';
+    if (i === tutorialStep) { ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 8; } else ctx.shadowBlur = 0;
+    ctx.arc(sx + i * gap, L.cy0 + L.chh - 20, i === tutorialStep ? 5 : 4, 0, Math.PI * 2); ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -1968,11 +2209,13 @@ function drawMenu() {
   ctx.fillText('CYBER HIGHWAY • COMBAT RACER', midX, midY - 152);
   const sw = Math.min(screenWidth * 0.86, 320), sy = midY - 142;
   ctx.fillStyle = 'rgba(12,18,36,0.85)'; ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.roundRect(midX - sw / 2, sy, sw, 50, 10); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(midX - sw / 2, sy, sw, 64, 10); ctx.fill(); ctx.stroke();
   ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#8e9bbb';
-  ctx.fillText(`ENEMIES: ${lifetimeStats.totalEnemies} • COINS: ${totalCoins} • BOSSES: ${lifetimeStats.bossesDefeated || 0}`, midX, sy + 20);
+  ctx.fillText(`ENEMIES: ${lifetimeStats.totalEnemies} • COINS: ${totalCoins} • BOSSES: ${lifetimeStats.bossesDefeated || 0}`, midX, sy + 18);
   ctx.fillStyle = '#ffd700'; ctx.font = '900 14px sans-serif';
-  ctx.fillText(`BEST SCORE: ${lifetimeStats.bestScore || 0}`, midX, sy + 38);
+  ctx.fillText(`BEST SCORE: ${lifetimeStats.bestScore || 0}`, midX, sy + 36);
+  ctx.fillStyle = '#ffb347'; ctx.font = 'bold 11px sans-serif';
+  ctx.fillText(`🏆 MILESTONES: ${highestMilestoneEver}`, midX, sy + 53);
   const p = 1 + 0.04 * Math.sin(gameTime * 4.5);
   drawBtn(midX, midY - 50, 195 * p, 46 * p, '#ffffff', '#051829', 'TAP TO PLAY', 18);
   drawBtn(midX, midY - 4, 190, 36, '#ff66c4', '#20081d', `🚗 GARAGE (${unlockedSkinIds.length}/4)`, 13);
@@ -1990,9 +2233,6 @@ function drawMenu() {
   const unCount = Object.keys(unlockedAchievements).length;
   drawBtn(midX, midY + 208, 210, 34, '#00ffff', '#0a1d30', `🏆 ACHIEVEMENTS (${unCount}/${ACHIEVEMENTS.length})`, 13);
   drawBtn(midX, midY + 246, 210, 34, '#b0b8d0', '#10142a', '⚙️ SETTINGS', 13);
-  const gy = midY + 284;
-  drawBtn(midX - 58, gy, 95, 28, ghostEnabled ? '#39ff14' : '#888', ghostEnabled ? '#081e10' : '#14141c', ghostEnabled ? '👻 GHOST: ON' : '👻 GHOST: OFF', 11);
-  drawBtn(midX + 58, gy, 95, 28, '#ff6688', '#220812', 'CLEAR GHOST', 11);
   ctx.restore();
 }
 
@@ -2096,7 +2336,9 @@ function drawSettings() {
   };
   volRow('🎵 MUSIC VOLUME', 272, musicVolPct, '#ff66c4');
   volRow('🔊 SFX VOLUME', 382, sfxVolPct, '#39ff14');
-  ctx.fillStyle = '#667'; ctx.font = '10.5px sans-serif'; ctx.fillText('Tires upgrade boosts steering on top of this setting', midX, 450);
+  ctx.fillStyle = '#667'; ctx.font = '10.5px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('Tires upgrade boosts steering on top of this setting', midX, 450);
+  drawBtn(midX, 500, 210, 38, '#00ffff', '#0a1d30', '📖 REPLAY TUTORIAL', 13);
   ctx.restore();
 }
 
@@ -2253,7 +2495,7 @@ function drawPause() {
 }
 
 function drawGameOver() {
-  ctx.save(); ctx.fillStyle = 'rgba(10,2,12,0.84)'; ctx.fillRect(0, 0, screenWidth, screenHeight);
+  ctx.save(); ctx.fillStyle = 'rgba(10,2,12,0.84)'; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40);
   const midX = screenWidth / 2, midY = screenHeight / 2, timeUp = gameOverReason === 'time', md = getMode(), gdf = getDifficulty();
   ctx.textAlign = 'center'; ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = md.color;
   ctx.fillText(`${md.icon} ${md.name} MODE`, midX, midY - 152);
@@ -2266,12 +2508,14 @@ function drawGameOver() {
   ctx.strokeStyle = timeUp ? 'rgba(57,255,20,0.4)' : 'rgba(255,0,127,0.4)';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.roundRect(midX - cw / 2, cy, cw, 126, 16); ctx.fill(); ctx.stroke();
-  ctx.font = '12px sans-serif'; ctx.fillStyle = '#8e9bbb'; ctx.fillText('FINAL SCORE', midX, cy + 24);
-  ctx.font = '900 32px sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(score.toString(), midX, cy + 58);
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#8e9bbb'; ctx.fillText('FINAL SCORE', midX, cy + 20);
+  ctx.font = '900 32px sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(score.toString(), midX, cy + 52);
   ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = '#ffd700';
-  ctx.fillText(`BEST SCORE: ${lifetimeStats.bestScore || bestScore}`, midX, cy + 86);
+  ctx.fillText(`BEST SCORE: ${lifetimeStats.bestScore || bestScore}`, midX, cy + 78);
   ctx.fillStyle = '#ffe600';
-  ctx.fillText(`RUN COINS: +${coinsCollected} • TOTAL: 🪙 ${totalCoins}`, midX, cy + 108);
+  ctx.fillText(`RUN COINS: +${coinsCollected} • TOTAL: 🪙 ${totalCoins}`, midX, cy + 96);
+  ctx.fillStyle = '#ffb347';
+  ctx.fillText(`🏆 MILESTONES: ${milestonesReached}`, midX, cy + 114);
   // Note: gameOverHook is rendered via DOM element (#gameOverHook)
   const rdy = performance.now() - gameOverTimestamp >= 400;
   drawBtn(midX, midY + 116, 190, 48, rdy ? '#ff007f' : '#666', rdy ? '#2a0a20' : '#1a1a24', 'RETRY', 19);
@@ -2300,6 +2544,7 @@ function gameLoop(now) {
   const dt = rawDt * (game.slowMo || 1.0);
   if (currentState !== STATE_PAUSED) update(dt);
   ctx.save(); ctx.scale(dpr, dpr);
+  ctx.translate(shakeX, shakeY);
   drawBackground(); drawRoad(); drawSpeedLines();
   coins.forEach(c => {
     ctx.save(); ctx.translate(c.x, c.y);
@@ -2315,13 +2560,13 @@ function gameLoop(now) {
   });
   playerBullets.forEach(b => { ctx.fillStyle = b.color || '#00ffff'; ctx.fillRect(b.x - b.width / 2, b.y - b.height / 2, b.width, b.height); });
   enemyBullets.forEach(b => { ctx.fillStyle = b.color || '#ff0033'; ctx.fillRect(b.x - b.width / 2, b.y - b.height / 2, b.width, b.height); });
-  drawBoss(); drawGhostCar(); drawPlayerCar(); drawTraffic();
+  drawBoss(); drawPlayerCar(); drawTraffic();
   particles.forEach(p => {
     ctx.save(); ctx.globalAlpha = Math.max(p.alpha, 0); ctx.fillStyle = p.color;
     ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); ctx.restore();
   });
   drawWeatherOverlay();
-  if (currentState === STATE_PLAYING) drawHUD();
+  if (currentState === STATE_PLAYING) { drawHUD(); if (tutorialActive) drawTutorial(); }
   else if (currentState === STATE_PAUSED) { drawHUD(); drawPause(); }
   else if (currentState === STATE_MENU) { drawMenu(); if (rewardPopup) drawRewardPopup(); }
   else if (currentState === STATE_GARAGE) drawGarage();
