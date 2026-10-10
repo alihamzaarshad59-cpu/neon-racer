@@ -212,7 +212,7 @@ function soundCrash() {
 function soundStart() { playTone(523.25, 'triangle', 0.12, 0.15, 0.001); setTimeout(() => playTone(659.25, 'triangle', 0.18, 0.18, 0.001), 90); }
 
 // STATES
-const STATE_MENU = 0, STATE_PLAYING = 1, STATE_GAMEOVER = 2, STATE_GARAGE = 3, STATE_UPGRADES = 4, STATE_PAUSED = 5, STATE_ACHIEVEMENTS = 6, STATE_SETTINGS = 7, STATE_MODE = 8;
+const STATE_MENU = 0, STATE_PLAYING = 1, STATE_GAMEOVER = 2, STATE_GARAGE = 3, STATE_UPGRADES = 4, STATE_PAUSED = 5, STATE_ACHIEVEMENTS = 6, STATE_SETTINGS = 7, STATE_MODE = 8, STATE_DIFFICULTY = 9;
 let currentState = STATE_MENU, gameOverTimestamp = 0, gameOverReason = 'crash';
 const canvas = document.getElementById('gameCanvas'), ctx = canvas.getContext('2d');
 let screenWidth = 0, screenHeight = 0, dpr = 1, roadX = 0, roadW = 0, laneWidth = 0, roadScrollOffset = 0;
@@ -256,6 +256,54 @@ try { const sm = localStorage.getItem('neon_racer_mode'); if (sm && MODES.some(m
 function getMode() { return MODES.find(m => m.id === gameMode) || MODES[0]; }
 let driftScore = 0, driftStreak = 0, driftCombo = false, driftActive = false;
 
+// DIFFICULTY (dynamic lane count)
+const DIFFICULTIES = [
+  {
+    id: 'easy',
+    name: 'EASY',
+    icon: '🟢',
+    color: '#39ff14',
+    lanes: 3,
+    trafficSpeedMult: 0.85,
+    spawnRateMult: 0.85,
+    scoreMult: 1.0,
+    desc: '3 lanes - Relaxed racing for beginners'
+  },
+  {
+    id: 'medium',
+    name: 'MEDIUM',
+    icon: '🟡',
+    color: '#ffe600',
+    lanes: 4,
+    trafficSpeedMult: 1.0,
+    spawnRateMult: 1.0,
+    scoreMult: 1.3,
+    desc: '4 lanes - Balanced challenge, 1.3x score'
+  },
+  {
+    id: 'hard',
+    name: 'HARD',
+    icon: '🔴',
+    color: '#ff0055',
+    lanes: 5,
+    trafficSpeedMult: 1.15,
+    spawnRateMult: 1.2,
+    scoreMult: 1.6,
+    desc: '5 lanes - Intense chaos, 1.6x score reward!'
+  }
+];
+let currentDifficulty = 'easy';
+try {
+  const sdf = localStorage.getItem('neon_racer_difficulty');
+  if (sdf && DIFFICULTIES.some(d => d.id === sdf)) currentDifficulty = sdf;
+} catch (e) {}
+function getDifficulty() {
+  return DIFFICULTIES.find(d => d.id === currentDifficulty) || DIFFICULTIES[0];
+}
+let laneCount = getDifficulty().lanes;
+function laneSpeedMult() { return laneCount >= 5 ? 1.2 : (laneCount === 4 ? 1.1 : 1.0); }
+function diffScore(v) { return Math.round(v * getDifficulty().scoreMult); }
+
 // CURRENCY
 let totalCoins = 0;
 try { totalCoins = parseInt(localStorage.getItem('neon_racer_coins') || '0', 10) || 0; } catch (e) {}
@@ -277,7 +325,7 @@ function saveUpgrades() { try { localStorage.setItem('neon_racer_upgrades', JSON
 function getMaxHP() { return 3 + (upgrades.hp || 0); }
 function getRunMaxHP() { return gameMode === 'elimination' ? 1 : getMaxHP(); }
 function getSpeedMult() { return 1 + (upgrades.speed || 0) * 0.08 + (upgrades.engine || 0) * 0.10; }
-function getSteerSpeed() { return STEER_SPEEDS[sensitivity] * (1 + (upgrades.tires || 0) * 0.05); }
+function getSteerSpeed() { return STEER_SPEEDS[sensitivity] * (1 + (upgrades.tires || 0) * 0.05) * laneSpeedMult(); }
 
 const UPG_STEP = 74, UPG_START = 98, UPG_HEADER = 84;
 let upgScroll = 0, scrollTouch = null;
@@ -331,6 +379,7 @@ let currentGhost = null, recordedGhostPositions = [], nextGhostSampleTimer = 0;
 try { const gd = localStorage.getItem('neon_racer_ghost'); if (gd) currentGhost = JSON.parse(gd); } catch (e) {}
 function getGhostStateAtTime(t) {
   if (!currentGhost || !currentGhost.positions || !currentGhost.positions.length || t > currentGhost.duration) return null;
+  if ((currentGhost.difficulty || 'easy') !== currentDifficulty) return null;
   const pts = currentGhost.positions;
   if (t <= pts[0].time) return pts[0];
   if (t >= pts[pts.length - 1].time) return pts[pts.length - 1];
@@ -353,13 +402,24 @@ try {
   const nb = localStorage.getItem('neon_racer_best') || localStorage.getItem('neon_racer_high_score');
   if (nb) { const nbn = parseInt(nb, 10); if (!isNaN(nbn) && nbn > bestScore) bestScore = nbn; }
 } catch (e) {}
+
+// BEST SCORE PER DIFFICULTY
+let bestByDiff = { easy: 0, medium: 0, hard: 0 }, bestDiffBeforeRun = 0;
+try {
+  const sbd = localStorage.getItem('neon_racer_best_diff');
+  if (sbd) bestByDiff = Object.assign(bestByDiff, JSON.parse(sbd));
+  else bestByDiff.easy = bestScore;
+} catch (e) { bestByDiff.easy = bestScore; }
+
 function saveStats() {
   try {
     if (score > lifetimeStats.bestScore) lifetimeStats.bestScore = score;
     if (score > bestScore) bestScore = score;
+    if (score > (bestByDiff[currentDifficulty] || 0)) bestByDiff[currentDifficulty] = score;
     localStorage.setItem('neon_racer_stats', JSON.stringify(lifetimeStats));
     localStorage.setItem('neon_racer_high_score', bestScore.toString());
     localStorage.setItem('neon_racer_best', bestScore.toString());
+    localStorage.setItem('neon_racer_best_diff', JSON.stringify(bestByDiff));
   } catch (e) {}
 }
 
@@ -812,7 +872,7 @@ function updateBoss(dt) {
   const dropLimit = boss.isMega ? 3.5 : 4.2;
   if (boss.dropCarTimer >= dropLimit && boss.y >= boss.baseTargetY - 10) {
     boss.dropCarTimer = 0;
-    const lane = Math.floor(Math.random() * 3);
+    const lane = Math.floor(Math.random() * laneCount);
     trafficCars.push({ x: roadX + lane * laneWidth + laneWidth / 2, y: boss.y + boss.height / 2 + 15, width: 38, height: 68, speed: currentSpeed * 0.45, colorPalette: TRAFFIC_PALETTES[Math.floor(Math.random() * TRAFFIC_PALETTES.length)], isEnemy: false, hp: 1, shootCooldown: 999 });
   }
 
@@ -832,7 +892,8 @@ function defeatBoss() {
   totalBossesDefeated += 1;
   playerHP = getRunMaxHP();
   if (wasMega) {
-    score += 2000;
+    const megaPts = diffScore(2000);
+    score += megaPts;
     totalCoins += 10;
     coinsCollected += 10;
     saveCoins();
@@ -840,7 +901,7 @@ function defeatBoss() {
     lifetimeStats.bossesDefeated = (lifetimeStats.bossesDefeated || 0) + 1;
     saveStats();
     checkAchievements();
-    floatingTexts.push({ text: '👹 MEGA BOSS DEFEATED! +2000', x: screenWidth / 2, y: boss.y, vy: 70, alpha: 1, decay: 2.2, color: '#b026ff' });
+    floatingTexts.push({ text: '👹 MEGA BOSS DEFEATED! +' + megaPts, x: screenWidth / 2, y: boss.y, vy: 70, alpha: 1, decay: 2.2, color: '#b026ff' });
     floatingTexts.push({ text: '+10 🪙 BONUS & FULL HEALTH!', x: screenWidth / 2, y: boss.y + 36, vy: 55, alpha: 1, decay: 2.2, color: '#ffd700' });
     for (let p = 0; p < 150; p++) {
       const ang = Math.random() * Math.PI * 2, spd = Math.random() * 450 + 60;
@@ -848,11 +909,12 @@ function defeatBoss() {
       particles.push({ x: boss.x, y: boss.y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, size: Math.random() * 8 + 3, color: col, alpha: 1, decay: 1.1 });
     }
   } else {
-    score += 500;
+    const bossPts = diffScore(500);
+    score += bossPts;
     lifetimeStats.bossesDefeated = (lifetimeStats.bossesDefeated || 0) + 1;
     saveStats();
     checkAchievements();
-    floatingTexts.push({ text: boss.name + ' DEFEATED! +500', x: screenWidth / 2, y: boss.y, vy: 70, alpha: 1, decay: 1.8, color: '#ffd700' });
+    floatingTexts.push({ text: boss.name + ' DEFEATED! +' + bossPts, x: screenWidth / 2, y: boss.y, vy: 70, alpha: 1, decay: 1.8, color: '#ffd700' });
     for (let p = 0; p < 70; p++) {
       const ang = Math.random() * Math.PI * 2, spd = Math.random() * 350 + 60;
       particles.push({ x: boss.x, y: boss.y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, size: Math.random() * 7 + 3, color: Math.random() > 0.5 ? boss.color : '#ffd700', alpha: 1, decay: 1.2 });
@@ -877,23 +939,56 @@ const TRAFFIC_PALETTES = [
   { body: '#00e5ff', glow: '#00e5ff', light: '#80f2ff' }
 ];
 
+// ROAD / LANE LAYOUT (depends on difficulty)
+function applyDifficultyLayout() {
+  const d = getDifficulty();
+  laneCount = d.lanes;
+  let w;
+  if (laneCount >= 5) w = Math.min(Math.max(screenWidth * 0.94, 360), 540);
+  else if (laneCount === 4) w = Math.min(Math.max(screenWidth * 0.86, 320), 500);
+  else w = Math.min(Math.max(screenWidth * 0.78, 280), 460);
+  // never wider than the screen (fits 5 lanes on 320px phones)
+  roadW = Math.min(w, Math.max(200, screenWidth - 8));
+  roadX = (screenWidth - roadW) / 2;
+  laneWidth = roadW / laneCount;
+  player.width = Math.min(Math.max(laneWidth * 0.44, 38), 50);
+  player.width = Math.min(player.width, laneWidth * 0.8);
+  player.height = player.width * 1.86;
+}
+function clampPlayerToRoad() {
+  const minX = roadX + player.width / 2 + 6, maxX = roadX + roadW - player.width / 2 - 6;
+  if (player.x < minX) player.x = minX; else if (player.x > maxX) player.x = maxX;
+}
+
 function resize() {
   screenWidth = window.innerWidth; screenHeight = window.innerHeight;
   dpr = Math.min(window.devicePixelRatio || 1, 2.5);
   canvas.width = Math.floor(screenWidth * dpr); canvas.height = Math.floor(screenHeight * dpr);
-  roadW = Math.min(Math.max(screenWidth * 0.78, 280), 460);
-  roadX = (screenWidth - roadW) / 2;
-  laneWidth = roadW / 3;
-  player.width = Math.min(Math.max(laneWidth * 0.44, 38), 50);
-  player.height = player.width * 1.86;
+  applyDifficultyLayout();
   player.y = (currentState === STATE_MENU || currentState >= STATE_GARAGE) ? screenHeight * 0.78 : (screenHeight - player.height - 40);
   if (currentState === STATE_MENU) player.x = roadX + roadW / 2;
+  else clampPlayerToRoad();
   stars = Array.from({ length: Math.max(50, Math.floor((screenWidth * screenHeight) / 10000)) }, () => ({ x: Math.random() * screenWidth, y: Math.random() * screenHeight, radius: Math.random() * 1.5 + 0.5, alpha: Math.random() * 0.8 + 0.2, speed: Math.random() * 18 + 6, pulseSpeed: Math.random() * 3 + 1, pulseOffset: Math.random() * Math.PI * 2 }));
   initWeather();
   upgScroll = clampUpgScroll(upgScroll);
 }
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+
+function setDifficulty(id) {
+  if (!DIFFICULTIES.some(d => d.id === id)) return;
+  if (id === currentDifficulty) { soundCoin(); return; }
+  currentDifficulty = id;
+  try { localStorage.setItem('neon_racer_difficulty', id); } catch (e) {}
+  // reset active entities when switching difficulty
+  trafficCars = []; playerBullets = []; enemyBullets = []; coins = []; powerups = []; particles = []; floatingTexts = [];
+  boss = null;
+  game.nearMissPopups = [];
+  applyDifficultyLayout();
+  player.x = roadX + roadW / 2;
+  player.y = screenHeight * 0.78;
+  soundCoin();
+}
 
 function resetSteering() { keyLeft = false; keyRight = false; activeTouches.clear(); }
 function isSteeringLeft() {
@@ -1022,6 +1117,9 @@ canvas.addEventListener('mousedown', e => {
 });
 window.addEventListener('mouseup', () => { keyLeft = false; keyRight = false; });
 
+// Main menu is vertically shifted up a little on short screens so every button stays visible
+function menuShift() { return Math.min(0, screenHeight / 2 - 308); }
+
 function handleActionInput(cx, cy) {
   const midX = screenWidth / 2, midY = screenHeight / 2;
   if (rewardPopup && currentState === STATE_MENU) {
@@ -1029,14 +1127,16 @@ function handleActionInput(cx, cy) {
     return;
   }
   if (currentState === STATE_MENU) {
+    const my = midY + menuShift();
     if (cx >= screenWidth - 62 && cy <= 62) { toggleSound(); return; }
-    if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (midY - 50)) <= 24) { startGame(); return; }
-    if (Math.abs(cx - midX) <= 100 && Math.abs(cy - (midY - 4)) <= 20) { currentState = STATE_GARAGE; soundPowerup(); return; }
-    if (Math.abs(cx - midX) <= 100 && Math.abs(cy - (midY + 40)) <= 20) { currentState = STATE_UPGRADES; upgScroll = 0; soundPowerup(); return; }
-    if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (midY + 132)) <= 18) { currentState = STATE_MODE; soundPowerup(); return; }
-    if (Math.abs(cx - midX) <= 110 && Math.abs(cy - (midY + 170)) <= 18) { currentState = STATE_ACHIEVEMENTS; soundPowerup(); return; }
-    if (Math.abs(cx - midX) <= 110 && Math.abs(cy - (midY + 208)) <= 18) { currentState = STATE_SETTINGS; soundPowerup(); return; }
-    const grY = midY + 246;
+    if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (my - 50)) <= 24) { startGame(); return; }
+    if (Math.abs(cx - midX) <= 100 && Math.abs(cy - (my - 4)) <= 20) { currentState = STATE_GARAGE; soundPowerup(); return; }
+    if (Math.abs(cx - midX) <= 100 && Math.abs(cy - (my + 40)) <= 20) { currentState = STATE_UPGRADES; upgScroll = 0; soundPowerup(); return; }
+    if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (my + 132)) <= 17) { currentState = STATE_MODE; soundPowerup(); return; }
+    if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (my + 170)) <= 17) { currentState = STATE_DIFFICULTY; soundPowerup(); return; }
+    if (Math.abs(cx - midX) <= 110 && Math.abs(cy - (my + 208)) <= 17) { currentState = STATE_ACHIEVEMENTS; soundPowerup(); return; }
+    if (Math.abs(cx - midX) <= 110 && Math.abs(cy - (my + 246)) <= 17) { currentState = STATE_SETTINGS; soundPowerup(); return; }
+    const grY = my + 284;
     if (cy >= grY - 16 && cy <= grY + 16) {
       if (cx >= midX - 105 && cx <= midX - 10) { ghostEnabled = !ghostEnabled; try { localStorage.setItem('neon_racer_ghost_enabled', ghostEnabled ? 'true' : 'false'); } catch (e) {} soundCoin(); return; }
       if (cx >= midX + 10 && cx <= midX + 105) { currentGhost = null; try { localStorage.removeItem('neon_racer_ghost'); } catch (e) {} soundEnemyExplosion(); showToast('GHOST CLEARED', '#ff0055'); return; }
@@ -1069,6 +1169,13 @@ function handleActionInput(cx, cy) {
       if (cx >= cardX && cx <= cardX + cardW && cy >= cardY && cy <= cardY + cardH) {
         gameMode = m.id; try { localStorage.setItem('neon_racer_mode', gameMode); } catch (e) {} soundCoin();
       }
+    });
+  } else if (currentState === STATE_DIFFICULTY) {
+    if (cx >= 16 && cx <= 110 && cy >= 20 && cy <= 68) { currentState = STATE_MENU; soundCoin(); return; }
+    const cardW = Math.min(screenWidth * 0.88, 380), cardH = 90, startY = 100;
+    DIFFICULTIES.forEach((d, idx) => {
+      const cardY = startY + idx * (cardH + 12), cardX = midX - cardW / 2;
+      if (cx >= cardX && cx <= cardX + cardW && cy >= cardY && cy <= cardY + cardH) setDifficulty(d.id);
     });
   } else if (currentState === STATE_PAUSED) {
     const btnW = 200, btnH = 46, resY = midY - 15, rstY = resY + 62, quitY = rstY + 62;
@@ -1117,8 +1224,10 @@ function handleActionInput(cx, cy) {
 
 function startGame() {
   initDailyChallenge(); currentState = STATE_PLAYING;
+  applyDifficultyLayout();
   score = 0; distanceTraveled = 0; coinsCollected = 0; gameTime = 0; gameOverReason = 'crash';
   bestScoreBeforeRun = bestScore;
+  bestDiffBeforeRun = bestByDiff[currentDifficulty] || 0;
   currentSpeed = 420 * getSpeedMult();
   playerHP = getRunMaxHP(); rapidFireTimer = 0; shieldTimer = 0; screenDamageFlash = 0; playerShootTimer = 0; playerFrozenTimer = 0;
   nitroTimer = 0; nitroCooldown = 0; driftScore = 0; driftStreak = 0; driftCombo = false; driftActive = false; musicTimer = 0;
@@ -1143,7 +1252,7 @@ function startGame() {
   if (hookEl) hookEl.style.display = 'none';
 
   trafficCars = []; playerBullets = []; enemyBullets = []; coins = []; powerups = []; particles = []; floatingTexts = [];
-  nextCarSpawnTimer = 0.8; nextCoinSpawnTimer = 1.6; nextPowerupSpawnTimer = 7.0;
+  nextCarSpawnTimer = 0.8 / getDifficulty().spawnRateMult; nextCoinSpawnTimer = 1.6; nextPowerupSpawnTimer = 7.0;
   player.x = roadX + roadW / 2; player.vx = 0; player.tilt = 0; player.y = screenHeight - player.height - 40;
   lifetimeStats.totalGames += 1; saveStats(); initWeather(); checkAchievements(); assignRandomMission(); soundStart();
   startEngineSound();
@@ -1156,13 +1265,13 @@ function triggerGameOver() {
   game.slowMo = 1.0;
   lastChanceActive = false;
   if (timeUp) soundMissionComplete(); else soundCrash();
-  if (gameMode === 'classic' && score > (lifetimeStats.bestScore || 0) && recordedGhostPositions.length > 5) {
-    currentGhost = { score: score, positions: recordedGhostPositions, duration: gameTime };
+  if (gameMode === 'classic' && score > bestDiffBeforeRun && recordedGhostPositions.length > 5) {
+    currentGhost = { score: score, positions: recordedGhostPositions, duration: gameTime, difficulty: currentDifficulty };
     try { localStorage.setItem('neon_racer_ghost', JSON.stringify(currentGhost)); } catch (e) {}
   }
 
-  // ONE MORE RUN HOOK
-  const prevBest = bestScoreBeforeRun;
+  // ONE MORE RUN HOOK (compared against your best on this difficulty)
+  const prevBest = bestDiffBeforeRun;
   const diff = prevBest - score;
   if (prevBest === 0) {
     gameOverHookMain = '🏁 FIRST RUN! Set a new record!';
@@ -1207,22 +1316,52 @@ function triggerGameOver() {
   }
 }
 
+function laneIndexOf(x) { return Math.floor((x - roadX) / laneWidth); }
+
 function spawnTrafficCar() {
   if (boss !== null) return;
   const occupied = [];
-  trafficCars.forEach(c => { if (c.y < 240) { const idx = Math.floor((c.x - roadX) / laneWidth); if (idx >= 0 && idx < 3 && !occupied.includes(idx)) occupied.push(idx); } });
-  if (occupied.length >= 2) return;
-  const avail = [0, 1, 2].filter(l => !occupied.includes(l));
+  trafficCars.forEach(c => { if (c.y < 240) { const idx = laneIndexOf(c.x); if (idx >= 0 && idx < laneCount && !occupied.includes(idx)) occupied.push(idx); } });
+  const maxOccupied = laneCount >= 5 ? 3 : 2;
+  if (occupied.length >= maxOccupied) return;
+  // don't drop a car on top of a freshly spawned coin / powerup
+  const itemLanes = [];
+  coins.concat(powerups).forEach(it => { if (it.y < 110) { const idx = laneIndexOf(it.x); if (!itemLanes.includes(idx)) itemLanes.push(idx); } });
+  const avail = [];
+  for (let l = 0; l < laneCount; l++) { if (!occupied.includes(l) && !itemLanes.includes(l)) avail.push(l); }
   if (!avail.length) return;
   const lane = avail[Math.floor(Math.random() * avail.length)];
+  const df = getDifficulty();
   const ws = WEATHER_DEFS[currentWeather].enemySlow || 1.0;
   const elim = gameMode === 'elimination';
   const isE = Math.random() < (elim ? 0.6 : 0.38);
   trafficCars.push({
     x: roadX + lane * laneWidth + laneWidth / 2, y: -100, width: player.width * 0.94, height: player.height * 0.94,
-    speed: currentSpeed * (0.35 + Math.random() * 0.35) * ws, isEnemy: isE, hp: 1, shootCooldown: elim ? 0.4 + Math.random() * 0.5 : 1.0 + Math.random(),
+    speed: currentSpeed * (0.35 + Math.random() * 0.35) * ws * df.trafficSpeedMult, isEnemy: isE, hp: 1, shootCooldown: elim ? 0.4 + Math.random() * 0.5 : 1.0 + Math.random(),
     colorPalette: isE ? { body: '#ff0033', glow: '#ff0033', light: '#ff4d6d' } : TRAFFIC_PALETTES[Math.floor(Math.random() * TRAFFIC_PALETTES.length)]
   });
+}
+
+// Pick a lane for a coin / powerup that has no traffic car (or other pickup) where it would spawn / catch up
+function pickFreeLane(spawnY) {
+  const free = [];
+  for (let l = 0; l < laneCount; l++) {
+    const lx = roadX + l * laneWidth + laneWidth / 2;
+    let blocked = false;
+    for (let i = 0; i < trafficCars.length && !blocked; i++) {
+      const c = trafficCars[i];
+      if (Math.abs(c.x - lx) < laneWidth * 0.5 && c.y > spawnY - 90 && c.y < screenHeight + 60) blocked = true;
+    }
+    if (!blocked) {
+      const others = coins.concat(powerups);
+      for (let i = 0; i < others.length && !blocked; i++) {
+        const o = others[i];
+        if (Math.abs(o.x - lx) < laneWidth * 0.5 && Math.abs(o.y - spawnY) < 70) blocked = true;
+      }
+    }
+    if (!blocked) free.push(l);
+  }
+  return free.length ? free[Math.floor(Math.random() * free.length)] : -1;
 }
 
 function applyPowerup(type) {
@@ -1316,8 +1455,9 @@ function update(dt) {
   currentSpeed = spd;
   const roadTravel = currentSpeed * dt;
   distanceTraveled += roadTravel;
-  if (gameMode === 'drift') score = Math.floor(driftScore) + coinsCollected * 5;
-  else score = (Math.floor((distanceTraveled / 30) * getWeatherScoreMultiplier()) + coinsCollected * 5) * (gameMode === 'elimination' ? 2 : 1);
+  const dMult = getDifficulty().scoreMult;
+  if (gameMode === 'drift') score = Math.floor((Math.floor(driftScore) + coinsCollected * 5) * dMult);
+  else score = Math.floor((Math.floor((distanceTraveled / 30) * getWeatherScoreMultiplier()) + coinsCollected * 5) * (gameMode === 'elimination' ? 2 : 1) * dMult);
   if (score > bestScore) bestScore = score;
   roadScrollOffset = (roadScrollOffset + roadTravel) % 60;
 
@@ -1398,12 +1538,20 @@ function update(dt) {
   }
 
   if (boss === null) {
-    if ((nextCarSpawnTimer -= dt) <= 0) { spawnTrafficCar(); nextCarSpawnTimer = (Math.max(1.0 - (currentSpeed - 420) * 0.0012, 0.45) + Math.random() * 0.4) * (gameMode === 'elimination' ? 0.7 : 1); }
-    if ((nextCoinSpawnTimer -= dt) <= 0) { coins.push({ x: roadX + Math.floor(Math.random() * 3) * laneWidth + laneWidth / 2, y: -40, radius: 13, pulseOffset: Math.random() * 6 }); nextCoinSpawnTimer = 1.4 + Math.random() * 1.8; }
+    if ((nextCarSpawnTimer -= dt) <= 0) { spawnTrafficCar(); nextCarSpawnTimer = (Math.max(1.0 - (currentSpeed - 420) * 0.0012, 0.45) + Math.random() * 0.4) * (gameMode === 'elimination' ? 0.7 : 1) * (1 / getDifficulty().spawnRateMult); }
+    if ((nextCoinSpawnTimer -= dt) <= 0) {
+      const cl = pickFreeLane(-40);
+      if (cl < 0) { nextCoinSpawnTimer = 0.25; }
+      else { coins.push({ x: roadX + cl * laneWidth + laneWidth / 2, y: -40, radius: 13, pulseOffset: Math.random() * 6 }); nextCoinSpawnTimer = 1.4 + Math.random() * 1.8; }
+    }
     if ((nextPowerupSpawnTimer -= dt) <= 0) {
-      const ptypes = gameMode === 'elimination' ? ['shield', 'rapid'] : ['shield', 'rapid', 'health'];
-      powerups.push({ type: ptypes[Math.floor(Math.random() * ptypes.length)], x: roadX + Math.floor(Math.random() * 3) * laneWidth + laneWidth / 2, y: -50, radius: 17, pulseOffset: Math.random() * 6 });
-      nextPowerupSpawnTimer = 10.0 + Math.random() * 6;
+      const pl = pickFreeLane(-50);
+      if (pl < 0) { nextPowerupSpawnTimer = 0.25; }
+      else {
+        const ptypes = gameMode === 'elimination' ? ['shield', 'rapid'] : ['shield', 'rapid', 'health'];
+        powerups.push({ type: ptypes[Math.floor(Math.random() * ptypes.length)], x: roadX + pl * laneWidth + laneWidth / 2, y: -50, radius: 17, pulseOffset: Math.random() * 6 });
+        nextPowerupSpawnTimer = 10.0 + Math.random() * 6;
+      }
     }
   }
 
@@ -1428,7 +1576,7 @@ function update(dt) {
         playerBullets.splice(j, 1);
         if ((car.hp -= 1) <= 0) {
           destroyed = true; comboKills += 1; const mult = getComboMultiplier(); checkComboTierUp();
-          const pts = 10 * mult; score += pts; distanceTraveled += 300; missionEnemiesKilled += 1; lifetimeStats.totalEnemies += 1;
+          const pts = Math.round(10 * mult * getDifficulty().scoreMult); score += pts; distanceTraveled += 300; missionEnemiesKilled += 1; lifetimeStats.totalEnemies += 1;
           soundEnemyExplosion();
           floatingTexts.push({ text: `+${pts}${mult > 1 ? (' x' + mult) : ''}`, x: car.x, y: car.y, vy: 55, alpha: 1, decay: 1.8, color: getComboColor(mult) });
           for (let p = 0; p < 20; p++) particles.push({ x: car.x, y: car.y, vx: (Math.random() - 0.5) * 200, vy: (Math.random() - 0.5) * 200, size: 3.5, color: car.colorPalette.glow, alpha: 1, decay: 1.8 });
@@ -1457,9 +1605,10 @@ function update(dt) {
   for (let i = coins.length - 1; i >= 0; i--) {
     const c = coins[i]; c.y += currentSpeed * dt;
     if (Math.hypot(player.x - c.x, player.y - c.y) < player.width / 2 + c.radius) {
-      coinsCollected += 1; totalCoins += 1; saveCoins(); score += 5; missionCoinsGathered += 1; lifetimeStats.totalCoins += 1;
+      const coinPts = diffScore(5);
+      coinsCollected += 1; totalCoins += 1; saveCoins(); score += coinPts; missionCoinsGathered += 1; lifetimeStats.totalCoins += 1;
       soundCoin();
-      floatingTexts.push({ text: '+5 (🪙+1)', x: c.x, y: c.y, vy: 60, alpha: 1, decay: 2, color: '#ffd700' });
+      floatingTexts.push({ text: `+${coinPts} (🪙+1)`, x: c.x, y: c.y, vy: 60, alpha: 1, decay: 2, color: '#ffd700' });
       for (let p = 0; p < 8; p++) particles.push({ x: c.x, y: c.y, vx: (Math.random() - 0.5) * 120, vy: (Math.random() - 0.5) * 120, size: 2.5, color: '#ffd700', alpha: 1, decay: 2 });
       coins.splice(i, 1); continue;
     }
@@ -1512,8 +1661,8 @@ function drawRoad() {
   ctx.shadowColor = '#ff007f'; ctx.shadowBlur = 18; ctx.strokeStyle = '#ff007f'; ctx.lineWidth = 4;
   ctx.beginPath(); ctx.moveTo(roadX + roadW, 0); ctx.lineTo(roadX + roadW, screenHeight); ctx.stroke();
   ctx.shadowColor = '#80d4ff'; ctx.shadowBlur = 8; ctx.strokeStyle = 'rgba(128, 212, 255, 0.45)';
-  ctx.lineWidth = 2.5; ctx.setLineDash([32, 28]); ctx.lineDashOffset = -roadScrollOffset;
-  for (let i = 1; i <= 2; i++) { const lx = roadX + i * laneWidth; ctx.beginPath(); ctx.moveTo(lx, -60); ctx.lineTo(lx, screenHeight + 60); ctx.stroke(); }
+  ctx.lineWidth = laneCount > 3 ? 1.8 : 2.5; ctx.setLineDash([32, 28]); ctx.lineDashOffset = -roadScrollOffset;
+  for (let i = 1; i <= laneCount - 1; i++) { const lx = roadX + i * laneWidth; ctx.beginPath(); ctx.moveTo(lx, -60); ctx.lineTo(lx, screenHeight + 60); ctx.stroke(); }
   ctx.restore();
 }
 
@@ -1698,11 +1847,21 @@ function drawHUD() {
   }
   ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 14; ctx.fillStyle = '#00ffff'; ctx.font = '900 22px sans-serif'; ctx.textAlign = 'left';
   ctx.fillText(score.toString(), 18, 64);
+  const hudDiff = getDifficulty();
+  if (hudDiff.scoreMult > 1) {
+    const scW = ctx.measureText(score.toString()).width;
+    ctx.save();
+    ctx.shadowColor = hudDiff.color; ctx.shadowBlur = 8; ctx.fillStyle = hudDiff.color; ctx.font = '900 12px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('x' + hudDiff.scoreMult, 18 + scW + 6, 64);
+    ctx.restore();
+  }
   ctx.shadowBlur = 0; ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(0, 255, 255, 0.7)'; ctx.fillText('SCORE', 18, 77);
   const md = getMode(), tLeft = Math.max(0, Math.ceil(TIME_TRIAL_DURATION - gameTime));
   ctx.font = 'bold 10.5px sans-serif'; ctx.textAlign = 'left';
   ctx.fillStyle = (gameMode === 'timetrial' && tLeft <= 5) ? '#ff0055' : md.color;
   ctx.fillText(`${md.icon} ${md.name}${gameMode === 'timetrial' ? ' • ' + tLeft + 's' : ''}`, 18, 94);
+  ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = hudDiff.color;
+  ctx.fillText(`${hudDiff.icon} ${hudDiff.name} • ${hudDiff.lanes} LANES${hudDiff.scoreMult > 1 ? ' • x' + hudDiff.scoreMult : ''}`, 18, 110);
   ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14; ctx.fillStyle = '#ffd700'; ctx.font = '900 20px sans-serif'; ctx.textAlign = 'right';
   ctx.fillText(bestScore.toString(), screenWidth - 18, 30);
   ctx.shadowBlur = 0; ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(255, 215, 0, 0.7)'; ctx.fillText('BEST', screenWidth - 18, 43);
@@ -1801,7 +1960,7 @@ function drawHUD() {
 
 function drawMenu() {
   ctx.save();
-  const midX = screenWidth / 2, midY = screenHeight / 2;
+  const midX = screenWidth / 2, midY = screenHeight / 2 + menuShift();
   drawBtn(screenWidth - 40, 40, 44, 44, soundEnabled ? '#00ffff' : '#555', 'rgba(5,24,41,0.85)', soundEnabled ? '🔊' : '🔇', 18);
   ctx.textAlign = 'center'; ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 30; ctx.fillStyle = '#00ffff';
   ctx.font = '900 40px sans-serif'; ctx.fillText('NEON RACER', midX, midY - 180);
@@ -1826,10 +1985,12 @@ function drawMenu() {
   ctx.fillText(dailyCompleted ? '✅ COMPLETED (+500🪙)' : `${ch.text} (${Math.min(dailyProgress, ch.target)}/${ch.target})`, midX, cy + 12);
   const md = getMode();
   drawBtn(midX, midY + 132, 210, 34, md.color, '#0a1020', `🎮 MODE: ${md.name}`, 13);
+  const df = getDifficulty();
+  drawBtn(midX, midY + 170, 210, 34, df.color, '#0a1020', `🎯 DIFFICULTY: ${df.name}`, 13);
   const unCount = Object.keys(unlockedAchievements).length;
-  drawBtn(midX, midY + 170, 210, 34, '#00ffff', '#0a1d30', `🏆 ACHIEVEMENTS (${unCount}/${ACHIEVEMENTS.length})`, 13);
-  drawBtn(midX, midY + 208, 210, 34, '#b0b8d0', '#10142a', '⚙️ SETTINGS', 13);
-  const gy = midY + 246;
+  drawBtn(midX, midY + 208, 210, 34, '#00ffff', '#0a1d30', `🏆 ACHIEVEMENTS (${unCount}/${ACHIEVEMENTS.length})`, 13);
+  drawBtn(midX, midY + 246, 210, 34, '#b0b8d0', '#10142a', '⚙️ SETTINGS', 13);
+  const gy = midY + 284;
   drawBtn(midX - 58, gy, 95, 28, ghostEnabled ? '#39ff14' : '#888', ghostEnabled ? '#081e10' : '#14141c', ghostEnabled ? '👻 GHOST: ON' : '👻 GHOST: OFF', 11);
   drawBtn(midX + 58, gy, 95, 28, '#ff6688', '#220812', 'CLEAR GHOST', 11);
   ctx.restore();
@@ -1967,6 +2128,57 @@ function drawModeSelect() {
   });
 }
 
+function drawDifficultySelect() {
+  ctx.fillStyle = 'rgba(4, 6, 20, 0.94)'; ctx.fillRect(0, 0, screenWidth, screenHeight);
+  const midX = screenWidth / 2;
+  drawBtn(62, 43, 88, 38, '#00ffff', '#0a1d30', '◀ BACK', 14);
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 14; ctx.fillStyle = '#00ffff';
+  ctx.font = '900 22px sans-serif'; ctx.fillText('🎯 DIFFICULTY', midX + 20, 43);
+  ctx.restore();
+  const cardW = Math.min(screenWidth * 0.88, 380), cardH = 90, startY = 100;
+  DIFFICULTIES.forEach((d, idx) => {
+    const cardY = startY + idx * (cardH + 12), cardX = midX - cardW / 2, sel = currentDifficulty === d.id;
+    ctx.save();
+    if (sel) { ctx.shadowColor = d.color; ctx.shadowBlur = 16; }
+    ctx.fillStyle = sel ? '#12233f' : '#0a0d1e';
+    ctx.strokeStyle = sel ? d.color : 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = sel ? 2.5 : 1.5;
+    ctx.beginPath(); ctx.roundRect(cardX, cardY, cardW, cardH, 12); ctx.fill(); ctx.stroke();
+    // colored accent bar
+    ctx.shadowBlur = 0; ctx.globalAlpha = sel ? 0.95 : 0.45; ctx.fillStyle = d.color;
+    ctx.beginPath(); ctx.roundRect(cardX + 1.5, cardY + 14, 4, cardH - 28, 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    // icon + name
+    ctx.font = '26px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(d.icon, cardX + 32, cardY + 32);
+    ctx.textAlign = 'left'; ctx.fillStyle = sel ? d.color : '#fff'; ctx.font = 'bold 15px sans-serif';
+    ctx.fillText(d.name, cardX + 62, cardY + 22);
+    // description (auto-shrinks to fit the card on narrow phones)
+    let fs = 10.5;
+    do { ctx.font = fs + 'px sans-serif'; fs -= 0.5; } while (ctx.measureText(d.desc).width > cardW - 74 && fs > 7);
+    ctx.fillStyle = '#8e9bbb'; ctx.fillText(d.desc, cardX + 62, cardY + 44);
+    // badges: lane count + score bonus
+    const by = cardY + 56, bh = 20;
+    ctx.font = 'bold 9.5px sans-serif';
+    ctx.strokeStyle = d.color; ctx.lineWidth = 1.2; ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.beginPath(); ctx.roundRect(cardX + 62, by, 62, bh, 10); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = d.color; ctx.textAlign = 'center'; ctx.fillText(d.lanes + ' LANES', cardX + 62 + 31, by + bh / 2 + 0.5);
+    ctx.strokeStyle = '#ffd700'; ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.beginPath(); ctx.roundRect(cardX + 130, by, 46, bh, 10); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffd700'; ctx.fillText(d.scoreMult.toFixed(1) + 'x', cardX + 130 + 23, by + bh / 2 + 0.5);
+    // best score on this difficulty
+    ctx.textAlign = 'right'; ctx.fillStyle = '#ffd700'; ctx.font = 'bold 10px sans-serif';
+    ctx.fillText('BEST: ' + (bestByDiff[d.id] || 0), cardX + cardW - 12, by + bh / 2 + 0.5);
+    if (sel) { ctx.fillStyle = d.color; ctx.font = 'bold 11px sans-serif'; ctx.fillText('SELECTED ★', cardX + cardW - 12, cardY + 22); }
+    ctx.restore();
+  });
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#667'; ctx.font = '10.5px sans-serif';
+  ctx.fillText('Difficulty changes lanes, traffic speed, spawn rate & score', midX, startY + DIFFICULTIES.length * (cardH + 12) + 10);
+  ctx.restore();
+}
+
 function drawGarage() {
   ctx.fillStyle = 'rgba(4, 6, 20, 0.94)'; ctx.fillRect(0, 0, screenWidth, screenHeight);
   const midX = screenWidth / 2;
@@ -2042,9 +2254,11 @@ function drawPause() {
 
 function drawGameOver() {
   ctx.save(); ctx.fillStyle = 'rgba(10,2,12,0.84)'; ctx.fillRect(0, 0, screenWidth, screenHeight);
-  const midX = screenWidth / 2, midY = screenHeight / 2, timeUp = gameOverReason === 'time', md = getMode();
+  const midX = screenWidth / 2, midY = screenHeight / 2, timeUp = gameOverReason === 'time', md = getMode(), gdf = getDifficulty();
   ctx.textAlign = 'center'; ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = md.color;
   ctx.fillText(`${md.icon} ${md.name} MODE`, midX, midY - 152);
+  ctx.font = 'bold 10.5px sans-serif'; ctx.fillStyle = gdf.color;
+  ctx.fillText(`${gdf.icon} ${gdf.name} • ${gdf.lanes} LANES${gdf.scoreMult > 1 ? ' • x' + gdf.scoreMult : ''}`, midX, midY - 136);
   ctx.font = '900 48px sans-serif'; ctx.fillStyle = timeUp ? '#39ff14' : '#ff0055';
   ctx.fillText(timeUp ? "TIME'S UP!" : 'CRASHED!', midX, midY - 105);
   const cw = Math.min(screenWidth * 0.82, 310), cy = midY - 65;
@@ -2115,6 +2329,7 @@ function gameLoop(now) {
   else if (currentState === STATE_ACHIEVEMENTS) drawAchievements();
   else if (currentState === STATE_SETTINGS) drawSettings();
   else if (currentState === STATE_MODE) drawModeSelect();
+  else if (currentState === STATE_DIFFICULTY) drawDifficultySelect();
   else if (currentState === STATE_GAMEOVER) drawGameOver();
   drawToast();
   ctx.restore();
