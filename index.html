@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -234,6 +235,9 @@ let lastChanceToastTimer = 0;
 let clutchSaveToast = false;
 let clutchSaveToastTimer = 0;
 
+// PER-RUN TRACKING (no-hit time, achievements check throttle)
+let runHitTaken = false, runNoHitTime = 0, runPrevHP = 3, achCheckTimer = 0;
+
 // GAME OVER HOOK
 let gameOverHookMain = '';
 let gameOverHookSub = '';
@@ -255,23 +259,35 @@ function clearScreenShake() { shakeIntensity = 0; shakeX = 0; shakeY = 0; }
 
 // KILL STREAK (rapid kills within 1.5s - separate from long-term combo)
 let killStreakCount = 0, killStreakTimer = 0, lastKillTime = 0;
-function showStreakText(text, color) {
-  floatingTexts.push({ text: text, x: screenWidth / 2, y: screenHeight * 0.4, vy: 40, alpha: 1, decay: 0.67, color: color, size: 28, blur: 20 });
+function showStreakText(text, color, size) {
+  floatingTexts.push({ text: text, x: screenWidth / 2, y: screenHeight * 0.4, vy: 40, alpha: 1, decay: 0.67, color: color, size: size || 28, blur: 20 });
 }
 function registerKillStreak() {
   killStreakCount++;
   killStreakTimer = 1.5;
   lastKillTime = gameTime;
-  if (killStreakCount === 2) showStreakText('DOUBLE KILL!', '#39ff14');
-  else if (killStreakCount === 3) showStreakText('TRIPLE KILL!', '#00ffff');
-  else if (killStreakCount === 5) showStreakText('RAMPAGE!', '#ffd700');
-  else if (killStreakCount === 10) showStreakText('UNSTOPPABLE!', '#ff7700');
-  else if (killStreakCount === 20) showStreakText('GODLIKE!', '#ff0055');
-  else if (killStreakCount === 30) showStreakText('LEGENDARY!', getRainbowColor());
+  dailyMax('streak', killStreakCount);
+  switch (killStreakCount) {
+    case 2: showStreakText('DOUBLE KILL!', '#39ff14'); break;
+    case 3: showStreakText('TRIPLE KILL!', '#00ffff'); break;
+    case 4: showStreakText('QUAD KILL!', '#3d8bff'); break;
+    case 5: showStreakText('RAMPAGE!', '#ffe600'); break;
+    case 7: showStreakText('KILLING SPREE!', '#ff7700'); triggerScreenShake(4, 0.2); break;
+    case 10: showStreakText('UNSTOPPABLE!', '#ff2222'); triggerScreenShake(6, 0.25); break;
+    case 15: showStreakText('GODLIKE!', '#ff00ff'); triggerScreenShake(7, 0.3); break;
+    case 20: showStreakText('LEGENDARY!', getRainbowColor()); triggerScreenShake(8, 0.3); break;
+    case 25: showStreakText('IMMORTAL!', getRainbowColor(), 34); triggerScreenShake(10, 0.4); break;
+    case 30:
+      showStreakText('TRANSCENDENT!', getRainbowColor(), 32);
+      triggerScreenShake(14, 0.5);
+      screenDamageFlash = 0.6; screenDamageFlashColor = 'rgba(255, 255, 255, 0.45)';
+      break;
+    default: break;
+  }
 }
 
 // MILESTONES
-let nextMilestone = 5000, milestonesReached = 0, highestMilestoneEver = 0;
+let nextMilestone = 5000, milestonesReached = 0, highestMilestoneEver = 0, milestonePauseTimer = 0;
 try { const hm = parseInt(localStorage.getItem('neon_racer_highest_milestone') || '0', 10); if (!isNaN(hm)) highestMilestoneEver = hm; } catch (e) {}
 let milestonePopup = { score: 0, reward: 0, timer: 0, active: false };
 const MILESTONE_REWARDS = {
@@ -301,19 +317,24 @@ function checkMilestones() {
     totalCoins += reward;
     saveCoins();
     milestonesReached++;
+    lifetimeStats.totalMilestones = (lifetimeStats.totalMilestones || 0) + 1;
+    if (milestonesReached > (lifetimeStats.maxMilestonesRun || 0)) lifetimeStats.maxMilestonesRun = milestonesReached;
+    dailyBump('milestones', 1);
     if (nextMilestone > highestMilestoneEver) {
       highestMilestoneEver = nextMilestone;
       try { localStorage.setItem('neon_racer_highest_milestone', highestMilestoneEver.toString()); } catch (e) {}
     }
     showMilestonePopup(nextMilestone, reward);
+    milestonePauseTimer = 1.5; // brief gameplay freeze so the popup can be read safely
+    try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {}
     soundMissionComplete();
     triggerScreenShake(12, 0.5);
-    for (let p = 0; p < 60; p++) {
+    for (let p = 0; p < 45; p++) {
       const ang = Math.random() * Math.PI * 2;
       const spd = Math.random() * 400 + 100;
       particles.push({
         x: screenWidth / 2,
-        y: screenHeight / 2,
+        y: screenHeight * 0.72,
         vx: Math.cos(ang) * spd,
         vy: Math.sin(ang) * spd,
         size: Math.random() * 5 + 3,
@@ -331,6 +352,7 @@ function checkMilestones() {
       });
     }
     nextMilestone += 5000;
+    saveStats();
   }
 }
 
@@ -428,6 +450,7 @@ const DIFFICULTIES = [
     desc: '5 lanes - Intense chaos, 1.6x score reward!'
   }
 ];
+const DIFF_STAT = { easy: 'easyModeBestScore', medium: 'mediumModeBestScore', hard: 'hardModeBestScore' };
 let currentDifficulty = 'easy';
 try {
   const sdf = localStorage.getItem('neon_racer_difficulty');
@@ -463,12 +486,32 @@ function getRunMaxHP() { return gameMode === 'elimination' ? 1 : getMaxHP(); }
 function getSpeedMult() { return 1 + (upgrades.speed || 0) * 0.08 + (upgrades.engine || 0) * 0.10; }
 function getSteerSpeed() { return STEER_SPEEDS[sensitivity] * (1 + (upgrades.tires || 0) * 0.05) * laneSpeedMult(); }
 
+// SCROLLABLE SCREENS (Upgrades, Garage, Achievements)
 const UPG_STEP = 74, UPG_START = 98, UPG_HEADER = 84;
-let upgScroll = 0, scrollTouch = null;
-function clampUpgScroll(v) {
-  const contentBottom = UPG_START + UPGRADE_KEYS.length * UPG_STEP, minS = Math.min(0, screenHeight - contentBottom - 12);
+const ACH_TOP = 96, ACH_CARD_H = 54, ACH_STEP = 62;
+let upgScroll = 0, achScroll = 0, garScroll = 0, scrollTouch = null;
+function isScrollState(s) { return s === STATE_UPGRADES || s === STATE_ACHIEVEMENTS || s === STATE_GARAGE; }
+function achLayout() {
+  const dailyHeadY = ACH_TOP, dailyStart = ACH_TOP + 18;
+  const permHeadY = dailyStart + 3 * ACH_STEP + 14, permStart = permHeadY + 18;
+  return { dailyHeadY: dailyHeadY, dailyStart: dailyStart, permHeadY: permHeadY, permStart: permStart, bottom: permStart + ACHIEVEMENTS.length * ACH_STEP };
+}
+function scrollBottom(s) {
+  if (s === STATE_UPGRADES) return UPG_START + UPGRADE_KEYS.length * UPG_STEP;
+  if (s === STATE_GARAGE) return 95 + (SKINS.length - 1) * 98 + 82;
+  if (s === STATE_ACHIEVEMENTS) return achLayout().bottom;
+  return 0;
+}
+function clampScroll(s, v) {
+  const minS = Math.min(0, screenHeight - scrollBottom(s) - 12);
   return Math.max(minS, Math.min(0, v));
 }
+function getScroll(s) { return s === STATE_UPGRADES ? upgScroll : (s === STATE_ACHIEVEMENTS ? achScroll : garScroll); }
+function setScroll(s, v) {
+  v = clampScroll(s, v);
+  if (s === STATE_UPGRADES) upgScroll = v; else if (s === STATE_ACHIEVEMENTS) achScroll = v; else if (s === STATE_GARAGE) garScroll = v;
+}
+function clampUpgScroll(v) { return clampScroll(STATE_UPGRADES, v); }
 
 // NITRO
 let nitroTimer = 0, nitroCooldown = 0, nitroDuration = 3;
@@ -478,6 +521,7 @@ function activateNitro() {
   if (currentState !== STATE_PLAYING || nitroTimer > 0 || nitroCooldown > 0) return;
   nitroDuration = 3 + (upgrades.nitrous || 0) * 2; nitroTimer = nitroDuration;
   soundNitro();
+  dailyBump('nitro', 1);
   triggerScreenShake(4, 0.2);
   floatingTexts.push({ text: '🔥 NITRO BOOST!', x: player.x, y: player.y - 50, vy: 50, alpha: 1, decay: 1.8, color: '#00ffff' });
 }
@@ -485,6 +529,8 @@ function activateNitro() {
 // COMBO
 let comboKills = 0, lastComboTier = 1;
 function getComboMultiplier() {
+  if (comboKills >= 100) return 20;
+  if (comboKills >= 75) return 15;
   if (comboKills >= 50) return 10;
   if (comboKills >= 30) return 5;
   if (comboKills >= 20) return 3;
@@ -500,6 +546,7 @@ function getComboColor(tier) {
 }
 function checkComboTierUp() {
   const mult = getComboMultiplier();
+  dailyMax('combo', mult);
   if (mult > (lifetimeStats.highestCombo || 0)) { lifetimeStats.highestCombo = mult; saveStats(); }
   if (mult > lastComboTier) {
     soundPowerup();
@@ -511,7 +558,14 @@ function checkComboTierUp() {
 }
 
 // STATS
-let lifetimeStats = { totalGames: 0, totalEnemies: 0, totalCoins: 0, bestScore: 0, bossesDefeated: 0, megaBossesDefeated: 0, highestCombo: 0 };
+let lifetimeStats = {
+  totalGames: 0, totalEnemies: 0, totalCoins: 0, bestScore: 0, bossesDefeated: 0, megaBossesDefeated: 0, highestCombo: 0,
+  totalMilestones: 0, maxMilestonesRun: 0,
+  hardModeBestScore: 0, mediumModeBestScore: 0, easyModeBestScore: 0,
+  eliminationGames: 0, timetrialGames: 0, driftGames: 0,
+  driftBestScore: 0, timetrialBestScore: 0,
+  weathersPlayed: {}
+};
 try {
   const ss = localStorage.getItem('neon_racer_stats');
   if (ss) lifetimeStats = Object.assign(lifetimeStats, JSON.parse(ss));
@@ -528,6 +582,27 @@ try {
   else bestByDiff.easy = bestScore;
 } catch (e) { bestByDiff.easy = bestScore; }
 
+// EXTRA LIFETIME STATS (separate localStorage keys)
+function readNumKey(k) {
+  try { const n = parseInt(localStorage.getItem(k) || '0', 10); return isNaN(n) ? 0 : n; } catch (e) { return 0; }
+}
+(function loadExtraStats() {
+  const ls = lifetimeStats;
+  ls.totalMilestones = Math.max(ls.totalMilestones || 0, readNumKey('neon_racer_total_milestones'));
+  ls.eliminationGames = Math.max(ls.eliminationGames || 0, readNumKey('neon_racer_elimination_games'));
+  ls.timetrialGames = Math.max(ls.timetrialGames || 0, readNumKey('neon_racer_timetrial_games'));
+  ls.driftGames = Math.max(ls.driftGames || 0, readNumKey('neon_racer_drift_games'));
+  if (!ls.weathersPlayed || typeof ls.weathersPlayed !== 'object' || Array.isArray(ls.weathersPlayed)) ls.weathersPlayed = {};
+  try {
+    const wp = JSON.parse(localStorage.getItem('neon_racer_weathers_played') || 'null');
+    if (Array.isArray(wp)) wp.forEach(k => { ls.weathersPlayed[k] = true; });
+    else if (wp && typeof wp === 'object') Object.keys(wp).forEach(k => { if (wp[k]) ls.weathersPlayed[k] = true; });
+  } catch (e) {}
+  ls.easyModeBestScore = Math.max(ls.easyModeBestScore || 0, bestByDiff.easy || 0);
+  ls.mediumModeBestScore = Math.max(ls.mediumModeBestScore || 0, bestByDiff.medium || 0);
+  ls.hardModeBestScore = Math.max(ls.hardModeBestScore || 0, bestByDiff.hard || 0);
+})();
+
 // cleanup of the removed ghost system data (harmless if missing)
 try { localStorage.removeItem('neon_racer_ghost'); localStorage.removeItem('neon_racer_ghost_enabled'); } catch (e) {}
 
@@ -536,28 +611,103 @@ function saveStats() {
     if (score > lifetimeStats.bestScore) lifetimeStats.bestScore = score;
     if (score > bestScore) bestScore = score;
     if (score > (bestByDiff[currentDifficulty] || 0)) bestByDiff[currentDifficulty] = score;
+    lifetimeStats.easyModeBestScore = Math.max(lifetimeStats.easyModeBestScore || 0, bestByDiff.easy || 0);
+    lifetimeStats.mediumModeBestScore = Math.max(lifetimeStats.mediumModeBestScore || 0, bestByDiff.medium || 0);
+    lifetimeStats.hardModeBestScore = Math.max(lifetimeStats.hardModeBestScore || 0, bestByDiff.hard || 0);
     localStorage.setItem('neon_racer_stats', JSON.stringify(lifetimeStats));
     localStorage.setItem('neon_racer_high_score', bestScore.toString());
     localStorage.setItem('neon_racer_best', bestScore.toString());
     localStorage.setItem('neon_racer_best_diff', JSON.stringify(bestByDiff));
+    localStorage.setItem('neon_racer_total_milestones', String(lifetimeStats.totalMilestones || 0));
+    localStorage.setItem('neon_racer_weathers_played', JSON.stringify(lifetimeStats.weathersPlayed || {}));
+    localStorage.setItem('neon_racer_elimination_games', String(lifetimeStats.eliminationGames || 0));
+    localStorage.setItem('neon_racer_timetrial_games', String(lifetimeStats.timetrialGames || 0));
+    localStorage.setItem('neon_racer_drift_games', String(lifetimeStats.driftGames || 0));
   } catch (e) {}
 }
 
-// ACHIEVEMENTS
+// live per-run stat tracking (memory only, persisted by saveStats)
+function trackRunStats() {
+  const k = DIFF_STAT[currentDifficulty];
+  if (k && score > (lifetimeStats[k] || 0)) lifetimeStats[k] = score;
+  if (gameMode === 'drift' && score > (lifetimeStats.driftBestScore || 0)) lifetimeStats.driftBestScore = score;
+  if (gameMode === 'timetrial' && score > (lifetimeStats.timetrialBestScore || 0)) lifetimeStats.timetrialBestScore = score;
+  dailyMax('score', score);
+  dailyMax('time', Math.floor(gameTime));
+  if (!runHitTaken) dailyMax('noHit', Math.floor(runNoHitTime));
+  if (currentDifficulty === 'hard') dailyMax('hard', score);
+  else if (currentDifficulty === 'medium') dailyMax('medium', score);
+  if (gameMode === 'drift') dailyMax('drift', score);
+  else if (gameMode === 'elimination') dailyMax('elim', score);
+}
+function markWeather() {
+  const wp = lifetimeStats.weathersPlayed;
+  if (!wp[currentWeather]) { wp[currentWeather] = true; saveStats(); }
+}
+
+// ACHIEVEMENTS (48 total: 13 original + 35 new)
+// NOTE: tune this if Time Trial 5,000 feels too hard (Time Trial lasts only 30 seconds)
+const TIMETRIAL_ACH_TARGET = 5000;
+const A = (id, name, desc, target, prog) => ({ id: id, name: name, desc: desc, target: target, prog: prog });
+const pGames = () => lifetimeStats.totalGames || 0;
+const pBest = () => bestScore;
+const pKills = () => lifetimeStats.totalEnemies || 0;
+const pCoins = () => lifetimeStats.totalCoins || 0;
+const pBosses = () => lifetimeStats.bossesDefeated || 0;
+const pMega = () => lifetimeStats.megaBossesDefeated || 0;
+const pCombo = () => Math.max(lifetimeStats.highestCombo || 0, getComboMultiplier());
+const pMiles = () => Math.max(lifetimeStats.maxMilestonesRun || 0, milestonesReached);
+const pHard = () => lifetimeStats.hardModeBestScore || 0;
 const ACHIEVEMENTS = [
-  { id: 'first_run', name: 'First Run', desc: 'Play your first game' },
-  { id: 'score_1000', name: 'Neon Rookie', desc: 'Reach 1,000 score' },
-  { id: 'score_5000', name: 'Cyber Cruiser', desc: 'Reach 5,000 score' },
-  { id: 'score_10000', name: 'Highway Legend', desc: 'Reach 10,000 score' },
-  { id: 'kill_100', name: 'Bounty Hunter', desc: 'Destroy 100 enemies (lifetime)' },
-  { id: 'kill_500', name: 'Road Annihilator', desc: 'Destroy 500 enemies (lifetime)' },
-  { id: 'boss_slayer', name: 'Boss Slayer', desc: 'Defeat 5 bosses (lifetime)' },
-  { id: 'mega_slayer', name: 'Mega Slayer', desc: 'Defeat the Mega Boss' },
-  { id: 'coin_100', name: 'Pocket Change', desc: 'Collect 100 coins (lifetime)' },
-  { id: 'coin_500', name: 'Crypto Baron', desc: 'Collect 500 coins (lifetime)' },
-  { id: 'combo_5x', name: 'Combo Master', desc: 'Reach 5x combo in one run' },
-  { id: 'combo_10x', name: 'Ultra Combo', desc: 'Reach 10x combo in one run' },
-  { id: 'skin_all', name: 'Full Collection', desc: 'Unlock all 4 car skins' }
+  A('first_run', 'First Run', 'Play your first game', 1, pGames),
+  A('games_10', 'Dedicated Racer', 'Play 10 games', 10, pGames),
+  A('games_50', 'Veteran', 'Play 50 games', 50, pGames),
+  A('games_100', 'Hardcore Player', 'Play 100 games', 100, pGames),
+  A('games_500', 'Legendary Player', 'Play 500 games', 500, pGames),
+  A('score_1000', 'Neon Rookie', 'Reach 1,000 score', 1000, pBest),
+  A('score_5000', 'Cyber Cruiser', 'Reach 5,000 score', 5000, pBest),
+  A('score_10000', 'Highway Legend', 'Reach 10,000 score', 10000, pBest),
+  A('score_15000', 'Neon Legend', 'Reach 15,000 score', 15000, pBest),
+  A('score_25000', 'Highway God', 'Reach 25,000 score', 25000, pBest),
+  A('score_50000', 'Cyber Immortal', 'Reach 50,000 score', 50000, pBest),
+  A('score_100000', 'Grid Master', 'Reach 100,000 score', 100000, pBest),
+  A('milestone_today', 'Overachiever', 'Reach 10,000 score in one run', 10000, pBest),
+  A('kill_100', 'Bounty Hunter', 'Destroy 100 enemies (lifetime)', 100, pKills),
+  A('kill_500', 'Road Annihilator', 'Destroy 500 enemies (lifetime)', 500, pKills),
+  A('kill_1000', 'Kill Machine', 'Destroy 1,000 enemies (lifetime)', 1000, pKills),
+  A('kill_2500', 'Death Bringer', 'Destroy 2,500 enemies (lifetime)', 2500, pKills),
+  A('kill_5000', 'Annihilator', 'Destroy 5,000 enemies (lifetime)', 5000, pKills),
+  A('kill_10000', 'Extinction', 'Destroy 10,000 enemies (lifetime)', 10000, pKills),
+  A('coin_100', 'Pocket Change', 'Collect 100 coins (lifetime)', 100, pCoins),
+  A('coin_500', 'Crypto Baron', 'Collect 500 coins (lifetime)', 500, pCoins),
+  A('coin_1000', 'Coin Collector', 'Collect 1,000 coins (lifetime)', 1000, pCoins),
+  A('coin_2500', 'Rich Racer', 'Collect 2,500 coins (lifetime)', 2500, pCoins),
+  A('coin_5000', 'Coin Tycoon', 'Collect 5,000 coins (lifetime)', 5000, pCoins),
+  A('coin_10000', 'Cyber Banker', 'Collect 10,000 coins (lifetime)', 10000, pCoins),
+  A('boss_slayer', 'Boss Slayer', 'Defeat 5 bosses (lifetime)', 5, pBosses),
+  A('boss_10', 'Boss Hunter', 'Defeat 10 bosses', 10, pBosses),
+  A('boss_25', 'Boss Master', 'Defeat 25 bosses', 25, pBosses),
+  A('boss_50', 'Boss Legend', 'Defeat 50 bosses', 50, pBosses),
+  A('mega_slayer', 'Mega Slayer', 'Defeat the Mega Boss', 1, pMega),
+  A('mega_5', 'Mega Hunter', 'Defeat 5 Mega Bosses', 5, pMega),
+  A('mega_10', 'Mega Destroyer', 'Defeat 10 Mega Bosses', 10, pMega),
+  A('combo_5x', 'Combo Master', 'Reach 5x combo in one run', 5, pCombo),
+  A('combo_10x', 'Ultra Combo', 'Reach 10x combo in one run', 10, pCombo),
+  A('combo_15x', 'Combo King', 'Reach 15x combo', 15, pCombo),
+  A('combo_20x', 'Combo God', 'Reach 20x combo', 20, pCombo),
+  A('milestone_5', 'Milestone Master', 'Reach 5 milestones in one run', 5, pMiles),
+  A('milestone_10', 'Milestone Legend', 'Reach 10 milestones in one run', 10, pMiles),
+  A('milestone_20', 'Endless Warrior', 'Reach 20 milestones in one run', 20, pMiles),
+  A('drift_1000', 'Drift King', 'Score 1,000 in Drift mode', 1000, () => lifetimeStats.driftBestScore || 0),
+  A('elimination_10', 'Eliminator', 'Survive 10 runs in Elimination mode', 10, () => lifetimeStats.eliminationGames || 0),
+  A('timetrial_5000', 'Time Lord', 'Score ' + TIMETRIAL_ACH_TARGET.toLocaleString('en-US') + ' in Time Trial', TIMETRIAL_ACH_TARGET, () => lifetimeStats.timetrialBestScore || 0),
+  A('hard_5000', 'Hardcore Racer', 'Score 5,000 on Hard difficulty', 5000, pHard),
+  A('hard_10000', 'Hardcore Master', 'Score 10,000 on Hard difficulty', 10000, pHard),
+  A('hard_20000', 'Hardcore Legend', 'Score 20,000 on Hard difficulty', 20000, pHard),
+  A('all_difficulties', 'Triple Threat', 'Score 5,000 on all 3 difficulties', 3, () =>
+    [lifetimeStats.easyModeBestScore, lifetimeStats.mediumModeBestScore, lifetimeStats.hardModeBestScore].filter(v => (v || 0) >= 5000).length),
+  A('weather_master', 'Weather Master', 'Play in all 5 weathers', 5, () => WEATHER_KEYS.filter(k => lifetimeStats.weathersPlayed[k]).length),
+  A('skin_all', 'Full Collection', 'Unlock the first 4 car skins', 4, () => SKINS.slice(0, 4).filter(s => unlockedSkinIds.includes(s.id)).length)
 ];
 let unlockedAchievements = {};
 try {
@@ -568,38 +718,115 @@ try {
     else if (typeof p === 'object') unlockedAchievements = p;
   }
 } catch (e) {}
+function achUnlockedCount() { return ACHIEVEMENTS.filter(a => unlockedAchievements[a.id]).length; }
+function allAchievementsDone() { return ACHIEVEMENTS.every(a => unlockedAchievements[a.id]); }
 function unlockAchievement(id) {
   if (unlockedAchievements[id]) return;
   const ach = ACHIEVEMENTS.find(a => a.id === id);
   if (!ach) return;
-  const d = new Date(), ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  unlockedAchievements[id] = ds;
+  unlockedAchievements[id] = 'Unlocked';
   try { localStorage.setItem('neon_racer_achievements', JSON.stringify(unlockedAchievements)); } catch (e) {}
   totalCoins += 100;
   saveCoins();
   soundMissionComplete();
-  floatingTexts.push({ text: `🏆 ACHIEVEMENT: ${ach.name.toUpperCase()}! (+100🪙)`, x: screenWidth / 2, y: screenHeight * 0.28, vy: 50, alpha: 1, decay: 2.5, color: '#ffd700' });
+  const slot = floatingTexts.filter(f => f.isAch).length;
+  floatingTexts.push({ text: `🏆 ${ach.name.toUpperCase()}! +100🪙`, x: screenWidth / 2, y: screenHeight * 0.26 + slot * 26, vy: 40, alpha: 1, decay: 1.1, color: '#ffd700', size: 15, isAch: true });
   for (let p = 0; p < 25; p++) {
     const ang = Math.random() * Math.PI * 2, spd = Math.random() * 200 + 40;
     particles.push({ x: screenWidth / 2, y: screenHeight * 0.28, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, size: 3.5, color: '#ffd700', alpha: 1, decay: 2 });
   }
 }
 function checkAchievements() {
-  const eff = Math.max(score, bestScore);
-  if (lifetimeStats.totalGames >= 1) unlockAchievement('first_run');
-  if (eff >= 1000) unlockAchievement('score_1000');
-  if (eff >= 5000) unlockAchievement('score_5000');
-  if (eff >= 10000) unlockAchievement('score_10000');
-  if ((lifetimeStats.totalEnemies || 0) >= 100) unlockAchievement('kill_100');
-  if ((lifetimeStats.totalEnemies || 0) >= 500) unlockAchievement('kill_500');
-  if ((lifetimeStats.bossesDefeated || 0) >= 5) unlockAchievement('boss_slayer');
-  if ((lifetimeStats.megaBossesDefeated || 0) >= 1) unlockAchievement('mega_slayer');
-  if ((lifetimeStats.totalCoins || 0) >= 100) unlockAchievement('coin_100');
-  if ((lifetimeStats.totalCoins || 0) >= 500) unlockAchievement('coin_500');
-  if (getComboMultiplier() >= 5 || (lifetimeStats.highestCombo || 0) >= 5) unlockAchievement('combo_5x');
-  if (getComboMultiplier() >= 10 || (lifetimeStats.highestCombo || 0) >= 10) unlockAchievement('combo_10x');
-  if (unlockedSkinIds.length >= 4) unlockAchievement('skin_all');
+  for (let i = 0; i < ACHIEVEMENTS.length; i++) {
+    const a = ACHIEVEMENTS[i];
+    if (!unlockedAchievements[a.id] && a.prog() >= a.target) unlockAchievement(a.id);
+  }
 }
+
+// DAILY ACHIEVEMENTS (3 random per day, reset at midnight, +200 coins each)
+const DAILY_ACH_REWARD = 200;
+const DAILY_ACH_DEFS = [
+  { id: 'd_games', name: 'Daily Warrior', desc: 'Play 5 games today', target: 5, stat: 'games' },
+  { id: 'd_kills', name: 'Daily Killer', desc: 'Destroy 50 enemies today', target: 50, stat: 'enemies' },
+  { id: 'd_coins', name: 'Daily Collector', desc: 'Collect 30 coins today', target: 30, stat: 'coins' },
+  { id: 'd_score', name: 'Daily Score', desc: 'Score 10,000 in one run today', target: 10000, stat: 'score' },
+  { id: 'd_boss', name: 'Daily Boss', desc: 'Defeat 2 bosses today', target: 2, stat: 'bosses' },
+  { id: 'd_combo', name: 'Daily Combo', desc: 'Reach 10x combo today', target: 10, stat: 'combo' },
+  { id: 'd_milestone', name: 'Daily Milestone', desc: 'Reach 3 milestones today', target: 3, stat: 'milestones' },
+  { id: 'd_perfect', name: 'Daily Perfect', desc: 'Survive 60s without getting hit', target: 60, stat: 'noHit' },
+  { id: 'd_speed', name: 'Daily Speed', desc: 'Finish Time Trial with ' + TIMETRIAL_ACH_TARGET.toLocaleString('en-US') + '+ score', target: TIMETRIAL_ACH_TARGET, stat: 'tt' },
+  { id: 'd_hard', name: 'Daily Hard', desc: 'Score 5,000 on Hard today', target: 5000, stat: 'hard' },
+  { id: 'd_survivor', name: 'Daily Survivor', desc: 'Survive 120 seconds in one run', target: 120, stat: 'time' },
+  { id: 'd_nitro', name: 'Daily Nitro', desc: 'Use Nitro 5 times today', target: 5, stat: 'nitro' },
+  { id: 'd_drift', name: 'Daily Drifter', desc: 'Score 500 in Drift mode today', target: 500, stat: 'drift' },
+  { id: 'd_elim', name: 'Daily Eliminator', desc: 'Score 1,000 in Elimination today', target: 1000, stat: 'elim' },
+  { id: 'd_streak', name: 'Daily Rampage', desc: 'Get a 5-kill streak today', target: 5, stat: 'streak' },
+  { id: 'd_powerups', name: 'Daily Power', desc: 'Collect 5 power-ups today', target: 5, stat: 'powerups' },
+  { id: 'd_marathon', name: 'Daily Marathon', desc: 'Play 10 games today', target: 10, stat: 'games' },
+  { id: 'd_medium', name: 'Daily Medium', desc: 'Score 3,000 on Medium today', target: 3000, stat: 'medium' },
+  { id: 'd_healer', name: 'Daily Healer', desc: 'Collect 3 health packs today', target: 3, stat: 'healers' },
+  { id: 'd_nearmiss', name: 'Daily Dodger', desc: 'Get 10 near misses today', target: 10, stat: 'nearMiss' }
+];
+let dailyAch = { date: '', ids: [], stats: {}, done: {} }, dailyAchDirty = false, dailyAchSaveTimer = 0, dailyAchCheckTimer = 0;
+function pickDailyIds() {
+  const pool = DAILY_ACH_DEFS.map(d => d.id), out = [];
+  while (out.length < 3 && pool.length) out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  return out;
+}
+function saveDailyAch() {
+  dailyAchDirty = false;
+  try {
+    localStorage.setItem('neon_racer_daily_achievements', JSON.stringify({ ids: dailyAch.ids, stats: dailyAch.stats, done: dailyAch.done }));
+    localStorage.setItem('neon_racer_daily_achievements_date', dailyAch.date);
+  } catch (e) {}
+}
+function initDailyAchievements() {
+  const today = getTodayStr();
+  if (dailyAch.date === today) return;
+  let loaded = false;
+  try {
+    const sd = localStorage.getItem('neon_racer_daily_achievements_date');
+    const raw = localStorage.getItem('neon_racer_daily_achievements');
+    if (sd === today && raw) {
+      const p = JSON.parse(raw);
+      if (p && Array.isArray(p.ids) && p.ids.length === 3 && p.ids.every(id => DAILY_ACH_DEFS.some(d => d.id === id))) {
+        dailyAch = { date: today, ids: p.ids, stats: p.stats || {}, done: p.done || {} };
+        loaded = true;
+      }
+    }
+  } catch (e) {}
+  if (!loaded) { dailyAch = { date: today, ids: pickDailyIds(), stats: {}, done: {} }; saveDailyAch(); }
+}
+function checkDailyAch() {
+  dailyAch.ids.forEach(id => {
+    if (dailyAch.done[id]) return;
+    const def = DAILY_ACH_DEFS.find(d => d.id === id);
+    if (!def) return;
+    if ((dailyAch.stats[def.stat] || 0) >= def.target) {
+      dailyAch.done[id] = true;
+      totalCoins += DAILY_ACH_REWARD; saveCoins(); saveDailyAch();
+      soundMissionComplete();
+      floatingTexts.push({ text: '🎯 DAILY: ' + def.name.toUpperCase() + '! +' + DAILY_ACH_REWARD + '🪙', x: screenWidth / 2, y: screenHeight * 0.34, vy: 45, alpha: 1, decay: 1.1, color: '#39ff14', size: 15 });
+      if (currentState !== STATE_PLAYING) showToast('🎯 DAILY COMPLETE: ' + def.name.toUpperCase() + ' +' + DAILY_ACH_REWARD + '🪙', '#39ff14');
+    }
+  });
+}
+function dailyBump(stat, n) {
+  if (!dailyAch.date) return;
+  dailyAch.stats[stat] = (dailyAch.stats[stat] || 0) + (n || 1);
+  dailyAchDirty = true;
+  checkDailyAch();
+}
+function dailyMax(stat, v) {
+  if (!dailyAch.date) return;
+  if (v > (dailyAch.stats[stat] || 0)) {
+    dailyAch.stats[stat] = v;
+    dailyAchDirty = true;
+    checkDailyAch();
+  }
+}
+window.addEventListener('pagehide', () => { if (dailyAch.date) saveDailyAch(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && dailyAch.date) saveDailyAch(); });
 
 // DAILY CHALLENGE
 const DAILY_CHALLENGES = [
@@ -651,13 +878,18 @@ function checkDailyProgress(runE, runT, runS, runC, bossKilled) {
   }
 }
 initDailyChallenge();
+initDailyAchievements();
 
-// SKINS
+// SKINS (8 total)
 const SKINS = [
   { id: 'cyan', name: 'Neon Cyan', reqScore: 0, reqDesc: 'Default', bodyTop: '#0a2133', bodyMid: '#05111d', bodyBot: '#02070c', glow: '#00ffff', trail: '#00ffff', accent: '#00e5ff' },
   { id: 'magenta', name: 'Magenta Ghost', reqScore: 3000, reqDesc: 'Reach 3,000 Score', bodyTop: '#300826', bodyMid: '#1a0415', bodyBot: '#0d010b', glow: '#ff007f', trail: '#ff007f', accent: '#ff66c4' },
   { id: 'gold', name: 'Golden Legend', reqScore: 8000, reqDesc: 'Reach 8,000 Score', bodyTop: '#3b2f0a', bodyMid: '#241b05', bodyBot: '#120d02', glow: '#ffd700', trail: '#ffe600', accent: '#fff380' },
-  { id: 'rainbow', name: 'Rainbow Prism', reqScore: 20000, reqDesc: 'Reach 20,000 Score', bodyTop: '#101030', bodyMid: '#0a0a20', bodyBot: '#050512', glow: 'rainbow', trail: 'rainbow', accent: '#ffffff' }
+  { id: 'rainbow', name: 'Rainbow Prism', reqScore: 20000, reqDesc: 'Reach 20,000 Score', bodyTop: '#101030', bodyMid: '#0a0a20', bodyBot: '#050512', glow: 'rainbow', trail: 'rainbow', accent: '#ffffff' },
+  { id: 'crimson', name: 'Crimson Thunder', reqScore: 50000, reqDesc: 'Reach 50,000 Score', bodyTop: '#3b0a0a', bodyMid: '#1a0303', bodyBot: '#0d0101', glow: '#ff2200', trail: '#ff4400', accent: '#ff6633' },
+  { id: 'emerald', name: 'Emerald Viper', reqScore: 100000, reqDesc: 'Reach 100,000 Score', bodyTop: '#0a3b0a', bodyMid: '#031a03', bodyBot: '#010d01', glow: '#00ff44', trail: '#44ff88', accent: '#66ff99' },
+  { id: 'shadow', name: 'Shadow Phantom', reqScore: 250000, reqDesc: 'Reach 250,000 Score', bodyTop: '#0a0a0a', bodyMid: '#050505', bodyBot: '#000000', glow: '#8844ff', trail: '#aa66ff', accent: '#cc88ff' },
+  { id: 'cosmic', name: 'Cosmic Nova', reqScore: 0, reqAch: true, reqDesc: 'Complete all achievements', bodyTop: '#14063a', bodyMid: '#080320', bodyBot: '#02010a', glow: 'rainbow', trail: 'cosmic', accent: '#ffffff', special: true }
 ];
 let unlockedSkinIds = ['cyan'], selectedSkinId = 'cyan';
 try {
@@ -669,7 +901,9 @@ try {
 function checkSkinUnlocks() {
   let nu = false, eff = Math.max(bestScore, score);
   SKINS.forEach(sk => {
-    if (!unlockedSkinIds.includes(sk.id) && eff >= sk.reqScore) {
+    if (unlockedSkinIds.includes(sk.id)) return;
+    const ok = sk.reqAch ? allAchievementsDone() : eff >= sk.reqScore;
+    if (ok) {
       unlockedSkinIds.push(sk.id); nu = true;
       floatingTexts.push({ text: 'UNLOCKED ' + sk.name.toUpperCase() + '!', x: screenWidth / 2, y: screenHeight * 0.35, vy: 50, alpha: 1, decay: 1.5, color: '#ffd700' });
     }
@@ -701,7 +935,7 @@ function claimDailyReward() {
   totalCoins += coinsR; saveCoins();
   let msg = `🎁 DAY ${day}: +${coinsR} 🪙`;
   if (day === 7) {
-    const locked = SKINS.filter(s => !unlockedSkinIds.includes(s.id));
+    const locked = SKINS.filter(s => !unlockedSkinIds.includes(s.id) && !s.reqAch && s.reqScore <= 20000);
     if (locked.length) {
       const sk = locked[Math.floor(Math.random() * locked.length)];
       unlockedSkinIds.push(sk.id);
@@ -1014,6 +1248,7 @@ function defeatBoss() {
   const wasMega = !!boss.isMega;
   soundBossExplosion();
   totalBossesDefeated += 1;
+  dailyBump('bosses', 1);
   playerHP = getRunMaxHP();
   if (wasMega) {
     triggerScreenShake(16, 0.7);
@@ -1096,7 +1331,9 @@ function resize() {
   else clampPlayerToRoad();
   stars = Array.from({ length: Math.max(50, Math.floor((screenWidth * screenHeight) / 10000)) }, () => ({ x: Math.random() * screenWidth, y: Math.random() * screenHeight, radius: Math.random() * 1.5 + 0.5, alpha: Math.random() * 0.8 + 0.2, speed: Math.random() * 18 + 6, pulseSpeed: Math.random() * 3 + 1, pulseOffset: Math.random() * Math.PI * 2 }));
   initWeather();
-  upgScroll = clampUpgScroll(upgScroll);
+  upgScroll = clampScroll(STATE_UPGRADES, upgScroll);
+  achScroll = clampScroll(STATE_ACHIEVEMENTS, achScroll);
+  garScroll = clampScroll(STATE_GARAGE, garScroll);
 }
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 100));
@@ -1153,12 +1390,15 @@ function returnToMainMenu() {
   tutorialActive = false;
   clearScreenShake();
   milestonePopup.active = false;
+  milestonePauseTimer = 0;
   boss = null; trafficCars = []; playerBullets = []; enemyBullets = []; coins = []; powerups = []; particles = []; floatingTexts = [];
   game.nearMissPopups = [];
   nitroTimer = 0; nitroCooldown = 0;
   player.x = roadX + roadW / 2; player.y = screenHeight * 0.78;
   const hookEl = document.getElementById('gameOverHook');
   if (hookEl) hookEl.style.display = 'none';
+  initDailyAchievements();
+  if (dailyAch.date) saveDailyAch();
   soundCoin();
 }
 
@@ -1202,7 +1442,7 @@ canvas.addEventListener('touchstart', e => {
       if (t.clientX >= mx && t.clientX <= mx + 40 && t.clientY >= py && t.clientY <= py + 40) { toggleSound(); return; }
       if (inNitroBtn(t.clientX, t.clientY)) { activateNitro(); continue; }
     }
-    if (currentState === STATE_UPGRADES && !rewardPopup) {
+    if (isScrollState(currentState) && !rewardPopup) {
       scrollTouch = { id: t.identifier, startY: t.clientY, lastY: t.clientY, moved: false };
       continue;
     }
@@ -1219,7 +1459,7 @@ canvas.addEventListener('touchmove', e => {
     if (scrollTouch && t.identifier === scrollTouch.id) {
       const dy = t.clientY - scrollTouch.lastY; scrollTouch.lastY = t.clientY;
       if (Math.abs(t.clientY - scrollTouch.startY) > 10) scrollTouch.moved = true;
-      if (scrollTouch.moved && currentState === STATE_UPGRADES) upgScroll = clampUpgScroll(upgScroll + dy);
+      if (scrollTouch.moved && isScrollState(currentState)) setScroll(currentState, getScroll(currentState) + dy);
     }
   }
 }, { passive: false });
@@ -1230,14 +1470,14 @@ const endTouch = (e, cancelled) => {
     const t = e.changedTouches[i];
     activeTouches.delete(t.identifier);
     if (scrollTouch && t.identifier === scrollTouch.id) {
-      if (!cancelled && !scrollTouch.moved && currentState === STATE_UPGRADES) handleActionInput(t.clientX, t.clientY);
+      if (!cancelled && !scrollTouch.moved && isScrollState(currentState)) handleActionInput(t.clientX, t.clientY);
       scrollTouch = null;
     }
   }
 };
 canvas.addEventListener('touchend', e => endTouch(e, false), { passive: false });
 canvas.addEventListener('touchcancel', e => endTouch(e, true), { passive: false });
-canvas.addEventListener('wheel', e => { if (currentState === STATE_UPGRADES) { upgScroll = clampUpgScroll(upgScroll - e.deltaY); e.preventDefault(); } }, { passive: false });
+canvas.addEventListener('wheel', e => { if (isScrollState(currentState)) { setScroll(currentState, getScroll(currentState) - e.deltaY); e.preventDefault(); } }, { passive: false });
 
 canvas.addEventListener('mousedown', e => {
   initAudio();
@@ -1267,11 +1507,11 @@ function handleActionInput(cx, cy) {
     const my = midY + menuShift();
     if (cx >= screenWidth - 62 && cy <= 62) { toggleSound(); return; }
     if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (my - 50)) <= 24) { startGame(); return; }
-    if (Math.abs(cx - midX) <= 100 && Math.abs(cy - (my - 4)) <= 20) { currentState = STATE_GARAGE; soundPowerup(); return; }
+    if (Math.abs(cx - midX) <= 100 && Math.abs(cy - (my - 4)) <= 20) { currentState = STATE_GARAGE; garScroll = 0; soundPowerup(); return; }
     if (Math.abs(cx - midX) <= 100 && Math.abs(cy - (my + 40)) <= 20) { currentState = STATE_UPGRADES; upgScroll = 0; soundPowerup(); return; }
     if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (my + 132)) <= 17) { currentState = STATE_MODE; soundPowerup(); return; }
     if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (my + 170)) <= 17) { currentState = STATE_DIFFICULTY; soundPowerup(); return; }
-    if (Math.abs(cx - midX) <= 110 && Math.abs(cy - (my + 208)) <= 17) { currentState = STATE_ACHIEVEMENTS; soundPowerup(); return; }
+    if (Math.abs(cx - midX) <= 110 && Math.abs(cy - (my + 208)) <= 17) { initDailyAchievements(); currentState = STATE_ACHIEVEMENTS; achScroll = 0; soundPowerup(); return; }
     if (Math.abs(cx - midX) <= 110 && Math.abs(cy - (my + 246)) <= 17) { currentState = STATE_SETTINGS; soundPowerup(); return; }
   } else if (currentState === STATE_SETTINGS) {
     if (cx >= 16 && cx <= 110 && cy >= 20 && cy <= 68) { currentState = STATE_MENU; soundCoin(); return; }
@@ -1325,9 +1565,10 @@ function handleActionInput(cx, cy) {
     }
   } else if (currentState === STATE_GARAGE) {
     if (cx >= 16 && cx <= 110 && cy >= 20 && cy <= 68) { currentState = STATE_MENU; soundCoin(); return; }
+    if (cy < UPG_HEADER) return;
     const cardW = Math.min(screenWidth * 0.88, 380), cardH = 82, startY = 95;
     SKINS.forEach((skin, idx) => {
-      const cardY = startY + idx * 98, cardX = midX - cardW / 2;
+      const cardY = startY + idx * 98 + garScroll, cardX = midX - cardW / 2;
       if (cx >= cardX && cx <= cardX + cardW && cy >= cardY && cy <= cardY + cardH) {
         if (unlockedSkinIds.includes(skin.id)) { selectedSkinId = skin.id; try { localStorage.setItem('neon_racer_selected_skin', selectedSkinId); } catch (e) {} soundCoin(); }
         else soundPlayerHit();
@@ -1362,7 +1603,7 @@ function handleActionInput(cx, cy) {
 }
 
 function startGame() {
-  initDailyChallenge(); currentState = STATE_PLAYING;
+  initDailyChallenge(); initDailyAchievements(); currentState = STATE_PLAYING;
   applyDifficultyLayout();
   score = 0; distanceTraveled = 0; coinsCollected = 0; gameTime = 0; gameOverReason = 'crash';
   bestScoreBeforeRun = bestScore;
@@ -1372,9 +1613,10 @@ function startGame() {
   nitroTimer = 0; nitroCooldown = 0; driftScore = 0; driftStreak = 0; driftCombo = false; driftActive = false; musicTimer = 0;
   comboKills = 0; lastComboTier = 1;
   lastBossThreshold = 0; boss = null; totalBossesDefeated = 0;
+  runHitTaken = false; runNoHitTime = 0; runPrevHP = playerHP; achCheckTimer = 0;
 
   // milestones, kill streak, shake reset
-  nextMilestone = 5000; milestonesReached = 0;
+  nextMilestone = 5000; milestonesReached = 0; milestonePauseTimer = 0;
   milestonePopup = { score: 0, reward: 0, timer: 0, active: false };
   killStreakCount = 0; killStreakTimer = 0; lastKillTime = 0;
   clearScreenShake();
@@ -1399,7 +1641,12 @@ function startGame() {
   trafficCars = []; playerBullets = []; enemyBullets = []; coins = []; powerups = []; particles = []; floatingTexts = [];
   nextCarSpawnTimer = 0.8 / getDifficulty().spawnRateMult; nextCoinSpawnTimer = 1.6; nextPowerupSpawnTimer = 7.0;
   player.x = roadX + roadW / 2; player.vx = 0; player.tilt = 0; player.y = screenHeight - player.height - 40;
-  lifetimeStats.totalGames += 1; saveStats(); initWeather(); checkAchievements(); assignRandomMission(); soundStart();
+  lifetimeStats.totalGames += 1;
+  if (gameMode === 'elimination') lifetimeStats.eliminationGames = (lifetimeStats.eliminationGames || 0) + 1;
+  else if (gameMode === 'timetrial') lifetimeStats.timetrialGames = (lifetimeStats.timetrialGames || 0) + 1;
+  else if (gameMode === 'drift') lifetimeStats.driftGames = (lifetimeStats.driftGames || 0) + 1;
+  initWeather(); markWeather(); saveStats(); checkAchievements(); assignRandomMission(); soundStart();
+  dailyBump('games', 1);
   startEngineSound();
 
   // first-time tutorial (game stays paused until it is finished / skipped)
@@ -1418,7 +1665,12 @@ function triggerGameOver() {
   stopEngineSound();
   game.slowMo = 1.0;
   lastChanceActive = false;
+  milestonePauseTimer = 0;
   if (timeUp) soundMissionComplete(); else soundCrash();
+
+  trackRunStats();
+  if (timeUp && gameMode === 'timetrial') dailyMax('tt', score);
+  saveDailyAch();
 
   // ONE MORE RUN HOOK (compared against your best on this difficulty)
   const prevBest = bestDiffBeforeRun;
@@ -1449,6 +1701,7 @@ function triggerGameOver() {
   try { localStorage.setItem('neon_racer_best', bestScore.toString()); } catch (e) {}
   checkSkinUnlocks();
   checkAchievements();
+  checkSkinUnlocks();
 
   const hookEl = document.getElementById('gameOverHook');
   if (hookEl) {
@@ -1515,6 +1768,8 @@ function pickFreeLane(spawnY) {
 }
 
 function applyPowerup(type) {
+  dailyBump('powerups', 1);
+  if (type === 'health') dailyBump('healers', 1);
   if (type === 'shield') {
     shieldTimer = 8.0 + (upgrades.shield || 0) * 2;
     floatingTexts.push({ text: `SHIELD ACTIVE (${shieldTimer.toFixed(0)}s)!`, x: player.x, y: player.y - 40, vy: 50, alpha: 1, decay: 2, color: '#00e5ff' });
@@ -1525,6 +1780,12 @@ function applyPowerup(type) {
     playerHP = Math.min(playerHP + 1, getRunMaxHP());
     floatingTexts.push({ text: '+1 HEALTH!', x: player.x, y: player.y - 40, vy: 50, alpha: 1, decay: 2, color: '#39ff14' });
   }
+}
+
+// visual-only effects (kept animating even while gameplay is frozen)
+function updateEffects(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx * dt; p.y += p.vy * dt; if ((p.alpha -= p.decay * dt) <= 0) particles.splice(i, 1); }
+  for (let i = floatingTexts.length - 1; i >= 0; i--) { const ft = floatingTexts[i]; ft.y -= ft.vy * dt; if ((ft.alpha -= ft.decay * dt) <= 0) floatingTexts.splice(i, 1); }
 }
 
 // UPDATE
@@ -1539,6 +1800,18 @@ function update(dt) {
   if (milestonePopup.active) {
     milestonePopup.timer -= dt;
     if (milestonePopup.timer <= 0) { milestonePopup.timer = 0; milestonePopup.active = false; }
+  }
+  if (dailyAchDirty) {
+    dailyAchSaveTimer -= dt;
+    if (dailyAchSaveTimer <= 0) { saveDailyAch(); dailyAchSaveTimer = 1.5; }
+  }
+
+  // MILESTONE FREEZE: all gameplay entities (boss, bullets, enemies, player) stop for 1.5s
+  if (milestonePauseTimer > 0 && currentState === STATE_PLAYING) {
+    milestonePauseTimer -= dt;
+    if (milestonePauseTimer < 0) milestonePauseTimer = 0;
+    updateEffects(dt);
+    return;
   }
 
   if (lastChanceActive) {
@@ -1563,13 +1836,21 @@ function update(dt) {
     player.x = roadX + roadW / 2 + Math.sin(gameTime * 1.5) * 12;
     player.tilt = Math.sin(gameTime * 1.5) * 0.05;
     roadScrollOffset = (roadScrollOffset + 180 * dt) % 60;
+    dailyAchCheckTimer -= dt;
+    if (dailyAchCheckTimer <= 0) { dailyAchCheckTimer = 5; initDailyAchievements(); }
     return;
   }
 
   updateWeather(dt);
+  markWeather();
   updateMusic(dt);
   updateEngineSound();
   if (playerFrozenTimer > 0) playerFrozenTimer = Math.max(0, playerFrozenTimer - dt);
+
+  // no-hit tracking (damage = any HP loss)
+  if (playerHP < runPrevHP) runHitTaken = true;
+  runPrevHP = playerHP;
+  if (!runHitTaken) runNoHitTime += dt;
 
   if (nitroTimer > 0) { nitroTimer -= dt; if (nitroTimer <= 0) { nitroTimer = 0; nitroCooldown = 5; } }
   else if (nitroCooldown > 0) nitroCooldown = Math.max(0, nitroCooldown - dt);
@@ -1581,7 +1862,9 @@ function update(dt) {
   }
 
   checkBossSpawn(); updateBoss(dt); checkSkinUnlocks(); updateMissionProgress();
-  checkDailyProgress(missionEnemiesKilled, gameTime, score, coinsCollected, false); checkAchievements();
+  checkDailyProgress(missionEnemiesKilled, gameTime, score, coinsCollected, false);
+  achCheckTimer -= dt;
+  if (achCheckTimer <= 0) { achCheckTimer = 0.25; checkAchievements(); }
 
   if (screenDamageFlash > 0) screenDamageFlash = Math.max(0, screenDamageFlash - dt * 2.2);
   if (rapidFireTimer > 0) rapidFireTimer = Math.max(0, rapidFireTimer - dt);
@@ -1618,6 +1901,9 @@ function update(dt) {
   if (score > bestScore) bestScore = score;
   roadScrollOffset = (roadScrollOffset + roadTravel) % 60;
 
+  // per-run stat tracking (mode / difficulty bests, daily achievements)
+  trackRunStats();
+
   // milestone rewards use the raw (already multiplied) score
   checkMilestones();
 
@@ -1633,8 +1919,14 @@ function update(dt) {
   const minX = roadX + player.width / 2 + 6, maxX = roadX + roadW - player.width / 2 - 6;
   if (player.x < minX) { player.x = minX; player.vx = 0; } else if (player.x > maxX) { player.x = maxX; player.vx = 0; }
 
-  const curSkin = getSelectedSkin(), trCol = curSkin.trail === 'rainbow' ? getRainbowColor(180) : curSkin.trail;
+  const curSkin = getSelectedSkin();
+  const trCol = curSkin.trail === 'rainbow' ? getRainbowColor(180)
+    : (curSkin.trail === 'cosmic' ? (Math.random() < 0.4 ? '#ffffff' : getRainbowColor(Math.random() * 360)) : curSkin.trail);
   [-8, 8].forEach(ox => particles.push({ x: player.x + ox, y: player.y + player.height / 2 - 2, vx: (Math.random() - 0.5) * 20, vy: 140, size: 3, color: trCol, alpha: 0.75, decay: 3.5 }));
+  if (curSkin.special && Math.random() < 0.6) {
+    const sa = Math.random() * Math.PI * 2, sr = 18 + Math.random() * 26;
+    particles.push({ x: player.x + Math.cos(sa) * sr * 0.6, y: player.y + Math.sin(sa) * sr, vx: (Math.random() - 0.5) * 40, vy: 30 + Math.random() * 60, size: 1.5 + Math.random() * 1.8, color: Math.random() < 0.5 ? '#ffffff' : getRainbowColor(Math.random() * 360), alpha: 1, decay: 2.4 });
+  }
   if (nitroTimer > 0) {
     [-9, 0, 9].forEach(ox => particles.push({ x: player.x + ox, y: player.y + player.height / 2 + 4, vx: (Math.random() - 0.5) * 40, vy: 280 + Math.random() * 120, size: 3 + Math.random() * 3, color: Math.random() > 0.5 ? '#00ffff' : '#80f2ff', alpha: 0.9, decay: 3.2 }));
   }
@@ -1659,6 +1951,7 @@ function update(dt) {
           b.nearMissAwarded = true;
           nearMissCooldown = 0.3;
           score += 5;
+          dailyBump('nearMiss', 1);
           soundCoin();
           game.nearMissPopups.push({ text: 'NEAR MISS +5', x: player.x, y: player.y - 35, vy: 40, alpha: 1, decay: 1.0, color: '#00ffff' });
         }
@@ -1739,6 +2032,7 @@ function update(dt) {
           destroyed = true; comboKills += 1; const mult = getComboMultiplier(); checkComboTierUp();
           registerKillStreak();
           const pts = Math.round(10 * mult * getDifficulty().scoreMult); score += pts; distanceTraveled += 300; missionEnemiesKilled += 1; lifetimeStats.totalEnemies += 1;
+          dailyBump('enemies', 1);
           soundEnemyExplosion();
           floatingTexts.push({ text: `+${pts}${mult > 1 ? (' x' + mult) : ''}`, x: car.x, y: car.y, vy: 55, alpha: 1, decay: 1.8, color: getComboColor(mult) });
           for (let p = 0; p < 20; p++) particles.push({ x: car.x, y: car.y, vx: (Math.random() - 0.5) * 200, vy: (Math.random() - 0.5) * 200, size: 3.5, color: car.colorPalette.glow, alpha: 1, decay: 1.8 });
@@ -1769,6 +2063,7 @@ function update(dt) {
     if (Math.hypot(player.x - c.x, player.y - c.y) < player.width / 2 + c.radius) {
       const coinPts = diffScore(5);
       coinsCollected += 1; totalCoins += 1; saveCoins(); score += coinPts; missionCoinsGathered += 1; lifetimeStats.totalCoins += 1;
+      dailyBump('coins', 1);
       soundCoin();
       floatingTexts.push({ text: `+${coinPts} (🪙+1)`, x: c.x, y: c.y, vy: 60, alpha: 1, decay: 2, color: '#ffd700' });
       for (let p = 0; p < 8; p++) particles.push({ x: c.x, y: c.y, vx: (Math.random() - 0.5) * 120, vy: (Math.random() - 0.5) * 120, size: 2.5, color: '#ffd700', alpha: 1, decay: 2 });
@@ -1777,8 +2072,7 @@ function update(dt) {
     if (c.y > screenHeight + 40) coins.splice(i, 1);
   }
 
-  for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx * dt; p.y += p.vy * dt; if ((p.alpha -= p.decay * dt) <= 0) particles.splice(i, 1); }
-  for (let i = floatingTexts.length - 1; i >= 0; i--) { const ft = floatingTexts[i]; ft.y -= ft.vy * dt; if ((ft.alpha -= ft.decay * dt) <= 0) floatingTexts.splice(i, 1); }
+  updateEffects(dt);
 }
 
 // DRAWING
@@ -1888,12 +2182,35 @@ function drawPlayerCar() {
   ctx.fillStyle = beam;
   ctx.beginPath(); ctx.moveTo(-hw + 6, -hh); ctx.lineTo(-hw - 22, -hh - 160); ctx.lineTo(-hw + 30, -hh - 160); ctx.closePath(); ctx.fill();
   ctx.beginPath(); ctx.moveTo(hw - 6, -hh); ctx.lineTo(hw - 30, -hh - 160); ctx.lineTo(hw + 22, -hh - 160); ctx.closePath(); ctx.fill();
-  ctx.shadowColor = glow; ctx.shadowBlur = 24; ctx.fillStyle = glow;
+  if (skin.special) {
+    // Cosmic Nova: pulsing outer aura
+    ctx.save();
+    const auraCol = getRainbowColor(90);
+    ctx.shadowColor = auraCol; ctx.shadowBlur = 40; ctx.strokeStyle = auraCol; ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.45 + 0.25 * Math.sin(gameTime * 5);
+    ctx.beginPath(); ctx.roundRect(-hw - 5, -hh - 5, player.width + 10, player.height + 10, 12); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.shadowColor = glow; ctx.shadowBlur = skin.special ? 38 : 24; ctx.fillStyle = glow;
   ctx.beginPath(); ctx.roundRect(-hw * 0.9, -hh * 0.9, player.width * 0.9, player.height * 0.9, 8); ctx.fill();
   const bg = ctx.createLinearGradient(0, -hh, 0, hh);
   bg.addColorStop(0, skin.bodyTop); bg.addColorStop(0.5, skin.bodyMid); bg.addColorStop(1, skin.bodyBot);
   ctx.fillStyle = bg; ctx.strokeStyle = glow; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.roundRect(-hw, -hh, player.width, player.height, 8); ctx.fill(); ctx.stroke();
+  if (skin.special) {
+    // Cosmic Nova: animated stars drifting across the body
+    ctx.save();
+    ctx.beginPath(); ctx.roundRect(-hw, -hh, player.width, player.height, 8); ctx.clip();
+    ctx.shadowBlur = 0;
+    for (let i = 0; i < 14; i++) {
+      const sx = -hw + (((i * 53 + 17) % 100) / 100) * player.width;
+      const sy = -hh + ((((i * 37 + 11) % 100) / 100) * player.height + gameTime * (10 + (i % 4) * 6)) % player.height;
+      ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(gameTime * 3 + i));
+      ctx.fillStyle = i % 3 === 0 ? getRainbowColor(i * 40) : '#ffffff';
+      ctx.fillRect(sx, sy, 1.8, 1.8);
+    }
+    ctx.restore();
+  }
   ctx.shadowBlur = 6; ctx.fillStyle = '#061324'; ctx.strokeStyle = skin.accent; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.roundRect(-hw * 0.58, -hh * 0.42, player.width * 0.58, player.height * 0.38, 5); ctx.fill(); ctx.stroke();
   ctx.restore();
@@ -2009,35 +2326,37 @@ function drawMilestoneBar() {
   ctx.restore();
 }
 
+// Milestone popup: small, positioned low (above the player car) so it never covers boss fights
 function drawMilestonePopup() {
   if (!milestonePopup.active) return;
-  const t = milestonePopup.timer, el = 2.5 - t;
+  const t = milestonePopup.timer, el = 2.5 - t, ut = performance.now() / 1000;
   const slide = Math.min(1, el / 0.3), ease = 1 - Math.pow(1 - slide, 3);
   const a = t < 0.5 ? Math.max(0, t / 0.5) : 1;
-  const w = Math.min(280, screenWidth * 0.9), h = 140;
-  const x = screenWidth / 2 - w / 2, y = screenHeight * 0.36 - h / 2 - (1 - ease) * 90;
+  const w = Math.min(240, screenWidth - 20), h = 100;
+  const x = screenWidth / 2 - w / 2, y = screenHeight * 0.72 - h / 2 + (1 - ease) * 60;
+  const rb = off => `hsl(${((ut * 120 + (off || 0)) % 360)}, 100%, 55%)`;
   ctx.save();
   ctx.globalAlpha = a;
-  ctx.shadowColor = getRainbowColor(); ctx.shadowBlur = 24;
+  ctx.shadowColor = rb(0); ctx.shadowBlur = 22;
   const bgG = ctx.createLinearGradient(0, y, 0, y + h);
   bgG.addColorStop(0, '#3b2f0a'); bgG.addColorStop(1, '#1a1505');
   ctx.fillStyle = bgG;
-  ctx.beginPath(); ctx.roundRect(x, y, w, h, 16); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 14); ctx.fill();
   const rg = ctx.createLinearGradient(x, y, x + w, y + h);
-  rg.addColorStop(0, getRainbowColor(0)); rg.addColorStop(0.33, getRainbowColor(90));
-  rg.addColorStop(0.66, getRainbowColor(180)); rg.addColorStop(1, getRainbowColor(270));
+  rg.addColorStop(0, rb(0)); rg.addColorStop(0.33, rb(90));
+  rg.addColorStop(0.66, rb(180)); rg.addColorStop(1, rb(270));
   ctx.strokeStyle = rg; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.roundRect(x, y, w, h, 16); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 14); ctx.stroke();
   ctx.shadowBlur = 0;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 16; ctx.fillStyle = '#ffd700';
-  fitFont('🎉 MILESTONE!', w - 24, 28, '900');
-  ctx.fillText('🎉 MILESTONE!', screenWidth / 2, y + 36);
-  ctx.shadowBlur = 0; ctx.fillStyle = '#ffffff'; ctx.font = 'bold 16px sans-serif';
-  ctx.fillText('SCORE: ' + milestonePopup.score, screenWidth / 2, y + 74);
-  const pulse = 22 + Math.sin(gameTime * 10) * 2.5;
-  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14; ctx.fillStyle = '#ffd700'; ctx.font = '900 ' + pulse.toFixed(1) + 'px sans-serif';
-  ctx.fillText('+' + milestonePopup.reward + ' 🪙', screenWidth / 2, y + 108);
+  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14; ctx.fillStyle = '#ffd700';
+  fitFont('🎉 MILESTONE!', w - 24, 22, 'bold');
+  ctx.fillText('🎉 MILESTONE!', screenWidth / 2, y + 26);
+  ctx.shadowBlur = 0; ctx.fillStyle = '#ffffff'; ctx.font = 'bold 14px sans-serif';
+  ctx.fillText('SCORE: ' + milestonePopup.score, screenWidth / 2, y + 54);
+  const pulse = 18 + Math.sin(ut * 10) * 1.5;
+  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 12; ctx.fillStyle = '#ffd700'; ctx.font = '900 ' + pulse.toFixed(1) + 'px sans-serif';
+  ctx.fillText('+' + milestonePopup.reward + ' 🪙', screenWidth / 2, y + 80);
   ctx.restore();
 }
 
@@ -2218,7 +2537,7 @@ function drawMenu() {
   ctx.fillText(`🏆 MILESTONES: ${highestMilestoneEver}`, midX, sy + 53);
   const p = 1 + 0.04 * Math.sin(gameTime * 4.5);
   drawBtn(midX, midY - 50, 195 * p, 46 * p, '#ffffff', '#051829', 'TAP TO PLAY', 18);
-  drawBtn(midX, midY - 4, 190, 36, '#ff66c4', '#20081d', `🚗 GARAGE (${unlockedSkinIds.length}/4)`, 13);
+  drawBtn(midX, midY - 4, 190, 36, '#ff66c4', '#20081d', `🚗 GARAGE (${unlockedSkinIds.length}/${SKINS.length})`, 13);
   drawBtn(midX, midY + 40, 190, 36, '#ffe600', '#241a05', '⚡ UPGRADES', 13);
   const ch = getCurrentDailyChallenge(), cw = Math.min(screenWidth * 0.88, 330), cy = midY + 88;
   ctx.fillStyle = 'rgba(10,16,32,0.9)'; ctx.strokeStyle = dailyCompleted ? '#39ff14' : 'rgba(255,215,0,0.5)'; ctx.lineWidth = 1.5;
@@ -2230,8 +2549,7 @@ function drawMenu() {
   drawBtn(midX, midY + 132, 210, 34, md.color, '#0a1020', `🎮 MODE: ${md.name}`, 13);
   const df = getDifficulty();
   drawBtn(midX, midY + 170, 210, 34, df.color, '#0a1020', `🎯 DIFFICULTY: ${df.name}`, 13);
-  const unCount = Object.keys(unlockedAchievements).length;
-  drawBtn(midX, midY + 208, 210, 34, '#00ffff', '#0a1d30', `🏆 ACHIEVEMENTS (${unCount}/${ACHIEVEMENTS.length})`, 13);
+  drawBtn(midX, midY + 208, 210, 34, '#00ffff', '#0a1d30', `🏆 ACHIEVEMENTS (${achUnlockedCount()}/${ACHIEVEMENTS.length})`, 13);
   drawBtn(midX, midY + 246, 210, 34, '#b0b8d0', '#10142a', '⚙️ SETTINGS', 13);
   ctx.restore();
 }
@@ -2273,40 +2591,88 @@ function drawRewardPopup() {
   ctx.restore();
 }
 
+// one achievement card (permanent or daily). No dates are ever shown.
+function drawAchCard(x, y, w, name, desc, done, cur, target, accent, lockIcon, doneLabel) {
+  const fmt = n => Math.floor(n).toLocaleString('en-US');
+  ctx.save();
+  ctx.fillStyle = done ? '#0d1a29' : '#0a0d16';
+  ctx.strokeStyle = done ? '#39ff14' : 'rgba(255,255,255,0.1)';
+  ctx.lineWidth = 1.4;
+  if (done) { ctx.shadowColor = '#39ff14'; ctx.shadowBlur = 8; }
+  ctx.beginPath(); ctx.roundRect(x, y, w, ACH_CARD_H, 8); ctx.fill(); ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#ffffff';
+  ctx.fillText(done ? '✅' : lockIcon, x + 24, y + ACH_CARD_H / 2);
+  const tx = x + 46, maxW = w - 46 - 78;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = done ? '#ffffff' : '#8a8a8a';
+  fitFont(name, maxW, 13, 'bold');
+  ctx.fillText(name, tx, y + 14);
+  ctx.fillStyle = done ? '#8e9bbb' : '#666666';
+  fitFont(desc, maxW, 10.5, '');
+  ctx.fillText(desc, tx, y + 28);
+  ctx.textAlign = 'right';
+  if (done) {
+    ctx.fillStyle = '#39ff14'; ctx.font = 'bold 10px sans-serif';
+    ctx.fillText(doneLabel, x + w - 12, y + ACH_CARD_H / 2);
+  } else {
+    ctx.fillStyle = '#aab3c8'; ctx.font = 'bold 10px sans-serif';
+    ctx.fillText(fmt(Math.min(cur, target)) + '/' + fmt(target), x + w - 12, y + ACH_CARD_H / 2);
+    const bx = tx, by = y + 38, bw = maxW, frac = Math.max(0, Math.min(1, cur / target));
+    ctx.fillStyle = '#14182c';
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, 5, 2.5); ctx.fill();
+    if (frac > 0) {
+      ctx.fillStyle = accent;
+      ctx.beginPath(); ctx.roundRect(bx, by, Math.max(5, bw * frac), 5, 2.5); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
 function drawAchievements() {
   ctx.fillStyle = 'rgba(4, 6, 20, 0.94)'; ctx.fillRect(0, 0, screenWidth, screenHeight);
-  const midX = screenWidth / 2;
-  drawBtn(62, 43, 88, 38, '#00ffff', '#0a1d30', '◀ BACK', 14);
-  const unCount = Object.keys(unlockedAchievements).length;
+  const midX = screenWidth / 2, cardW = Math.min(screenWidth * 0.92, 400), cx = midX - cardW / 2, L = achLayout();
   ctx.save();
-  ctx.textAlign = 'center'; ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 16; ctx.fillStyle = '#ffd700';
+  ctx.beginPath(); ctx.rect(0, UPG_HEADER, screenWidth, screenHeight - UPG_HEADER); ctx.clip();
+  // Section 1: today's challenges
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.font = '900 13px sans-serif'; ctx.fillStyle = '#ffe600';
+  ctx.fillText("🎯 TODAY'S CHALLENGES", cx + 4, L.dailyHeadY + achScroll + 8);
+  ctx.textAlign = 'right'; ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#39ff14';
+  ctx.fillText('+' + DAILY_ACH_REWARD + '🪙 EACH', cx + cardW - 4, L.dailyHeadY + achScroll + 8);
+  dailyAch.ids.forEach((id, i) => {
+    const def = DAILY_ACH_DEFS.find(d => d.id === id);
+    if (!def) return;
+    const y = L.dailyStart + i * ACH_STEP + achScroll;
+    if (y + ACH_CARD_H < UPG_HEADER || y > screenHeight) return;
+    drawAchCard(cx, y, cardW, def.name, def.desc, !!dailyAch.done[id], dailyAch.stats[def.stat] || 0, def.target, '#ffe600', '🎯', 'COMPLETE');
+  });
+  // Section 2: permanent achievements
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.font = '900 13px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText('🏆 ACHIEVEMENTS', cx + 4, L.permHeadY + achScroll + 8);
+  ctx.textAlign = 'right'; ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#39ff14';
+  ctx.fillText('+100🪙 EACH', cx + cardW - 4, L.permHeadY + achScroll + 8);
+  ACHIEVEMENTS.forEach((ach, i) => {
+    const y = L.permStart + i * ACH_STEP + achScroll;
+    if (y + ACH_CARD_H < UPG_HEADER || y > screenHeight) return;
+    drawAchCard(cx, y, cardW, ach.name, ach.desc, !!unlockedAchievements[ach.id], ach.prog(), ach.target, '#00e5ff', '🔒', 'UNLOCKED');
+  });
+  ctx.restore();
+  // header
+  ctx.fillStyle = 'rgba(4, 6, 20, 0.98)'; ctx.fillRect(0, 0, screenWidth, UPG_HEADER);
+  drawBtn(62, 43, 88, 38, '#00ffff', '#0a1d30', '◀ BACK', 14);
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 16; ctx.fillStyle = '#ffd700';
   ctx.font = '900 22px sans-serif'; ctx.fillText('ACHIEVEMENTS', midX + 20, 36);
   ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#39ff14'; ctx.shadowBlur = 8;
-  ctx.fillText(`${unCount} / ${ACHIEVEMENTS.length} UNLOCKED • +100🪙 EACH`, midX + 20, 56);
+  ctx.fillText(`${achUnlockedCount()} / ${ACHIEVEMENTS.length} UNLOCKED`, midX + 20, 56);
+  ctx.shadowBlur = 0;
+  if (clampScroll(STATE_ACHIEVEMENTS, -99999) < 0) {
+    ctx.font = '10px sans-serif'; ctx.fillStyle = '#667';
+    ctx.fillText(achScroll > clampScroll(STATE_ACHIEVEMENTS, -99999) + 2 ? '▼ scroll for more' : '▲ scroll up', midX + 20, 74);
+  }
   ctx.restore();
-  const cardW = Math.min(screenWidth * 0.92, 400), cardH = 46, startY = 82, gap = 8;
-  ACHIEVEMENTS.forEach((ach, i) => {
-    const y = startY + i * (cardH + gap), x = midX - cardW / 2;
-    if (y + cardH < 0 || y > screenHeight) return;
-    const un = !!unlockedAchievements[ach.id];
-    ctx.save();
-    ctx.fillStyle = un ? '#0d1a29' : '#0a0d16';
-    ctx.strokeStyle = un ? '#ffd700' : 'rgba(255,255,255,0.1)';
-    ctx.lineWidth = 1.4;
-    if (un) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 8; }
-    ctx.beginPath(); ctx.roundRect(x, y, cardW, cardH, 8); ctx.fill(); ctx.stroke();
-    ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(un ? '✅' : '🔒', x + 24, y + cardH / 2);
-    ctx.textAlign = 'left'; ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = un ? '#ffffff' : '#777777';
-    ctx.fillText(ach.name, x + 46, y + 15);
-    ctx.font = '10.5px sans-serif'; ctx.fillStyle = un ? '#8e9bbb' : '#555555';
-    ctx.fillText(ach.desc, x + 46, y + 32);
-    if (un) {
-      ctx.textAlign = 'right'; ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#39ff14';
-      ctx.fillText(unlockedAchievements[ach.id] || 'DONE', x + cardW - 12, y + cardH / 2);
-    }
-    ctx.restore();
-  });
 }
 
 function drawSettings() {
@@ -2423,27 +2789,60 @@ function drawDifficultySelect() {
 
 function drawGarage() {
   ctx.fillStyle = 'rgba(4, 6, 20, 0.94)'; ctx.fillRect(0, 0, screenWidth, screenHeight);
-  const midX = screenWidth / 2;
-  drawBtn(62, 43, 88, 38, '#00ffff', '#0a1d30', '◀ BACK', 14);
-  ctx.textAlign = 'center'; ctx.font = '900 22px sans-serif'; ctx.fillStyle = '#ff007f'; ctx.fillText('CYBER GARAGE', midX + 20, 43);
-  const cardW = Math.min(screenWidth * 0.88, 380), cardH = 82, startY = 95;
+  const midX = screenWidth / 2, cardW = Math.min(screenWidth * 0.88, 380), cardH = 82, startY = 95;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, UPG_HEADER, screenWidth, screenHeight - UPG_HEADER); ctx.clip();
   SKINS.forEach((skin, idx) => {
-    const cardY = startY + idx * 98, cardX = midX - cardW / 2;
+    const cardY = startY + idx * 98 + garScroll, cardX = midX - cardW / 2;
+    if (cardY + cardH < UPG_HEADER || cardY > screenHeight) return;
     const un = unlockedSkinIds.includes(skin.id), sel = selectedSkinId === skin.id;
     const col = skin.glow === 'rainbow' ? getRainbowColor() : skin.glow;
     ctx.save();
-    ctx.fillStyle = sel ? '#12233f' : '#0a0d1e';
+    if (skin.special) { ctx.shadowColor = getRainbowColor(120); ctx.shadowBlur = un ? 22 + Math.sin(gameTime * 4) * 6 : 8; }
+    ctx.fillStyle = sel ? '#12233f' : (skin.special ? '#0c0a24' : '#0a0d1e');
     ctx.strokeStyle = sel ? col : (un ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.12)');
+    if (skin.special) ctx.strokeStyle = un ? getRainbowColor(60) : 'rgba(180,150,255,0.3)';
     ctx.lineWidth = sel ? 2.5 : 1.5;
     ctx.beginPath(); ctx.roundRect(cardX, cardY, cardW, cardH, 12); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0;
+    if (skin.special) {
+      // twinkling stars inside the Cosmic Nova card
+      ctx.save();
+      ctx.beginPath(); ctx.roundRect(cardX, cardY, cardW, cardH, 12); ctx.clip();
+      for (let i = 0; i < 18; i++) {
+        const sx = cardX + (((i * 71 + 13) % 100) / 100) * cardW, sy = cardY + (((i * 47 + 29) % 100) / 100) * cardH;
+        ctx.globalAlpha = (un ? 0.8 : 0.3) * Math.abs(Math.sin(gameTime * 2.5 + i));
+        ctx.fillStyle = i % 3 === 0 ? getRainbowColor(i * 30) : '#ffffff';
+        ctx.fillRect(sx, sy, 2, 2);
+      }
+      ctx.restore();
+    }
+    ctx.textBaseline = 'alphabetic';
     ctx.textAlign = 'left'; ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = un ? '#fff' : '#777';
     ctx.fillText(skin.name, cardX + 24, cardY + 28);
     ctx.font = '11.5px sans-serif'; ctx.fillStyle = un ? '#39ff14' : '#ff6688';
-    ctx.fillText(un ? 'UNLOCKED' : `🔒 ${skin.reqDesc}`, cardX + 24, cardY + 54);
+    let status = un ? 'UNLOCKED' : `🔒 ${skin.reqDesc}`;
+    if (!un && skin.reqAch) status = `🔒 ${skin.reqDesc} (${achUnlockedCount()}/${ACHIEVEMENTS.length})`;
+    fitFont(status, cardW - 24 - 100, 11.5, '');
+    ctx.fillText(status, cardX + 24, cardY + 54);
     ctx.textAlign = 'right'; ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = sel ? col : (un ? '#8e9bbb' : '#555');
+    ctx.textBaseline = 'middle';
     ctx.fillText(sel ? 'SELECTED ★' : (un ? 'EQUIP ▶' : '🔒'), cardX + cardW - 16, cardY + cardH / 2);
     ctx.restore();
   });
+  ctx.restore();
+  // header
+  ctx.fillStyle = 'rgba(4, 6, 20, 0.98)'; ctx.fillRect(0, 0, screenWidth, UPG_HEADER);
+  drawBtn(62, 43, 88, 38, '#00ffff', '#0a1d30', '◀ BACK', 14);
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.font = '900 22px sans-serif'; ctx.fillStyle = '#ff007f'; ctx.fillText('CYBER GARAGE', midX + 20, 36);
+  ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#ff66c4';
+  ctx.fillText(`${unlockedSkinIds.length} / ${SKINS.length} SKINS`, midX + 20, 56);
+  if (clampScroll(STATE_GARAGE, -99999) < 0) {
+    ctx.font = '10px sans-serif'; ctx.fillStyle = '#667';
+    ctx.fillText(garScroll > clampScroll(STATE_GARAGE, -99999) + 2 ? '▼ scroll for more' : '▲ scroll up', midX + 20, 74);
+  }
+  ctx.restore();
 }
 
 function drawUpgrades() {
