@@ -428,13 +428,14 @@ function diffScore(v) { return Math.round(v * getLaneCfg().scoreMult); }
 
 // ROAD TYPES
 const ROADS = [
+  { id: 'highway', name: 'Highway', icon: '🛣️', bg: ['#040614', '#070b1f', '#02040d'], road: '#0b0f20', left: '#00ffff', right: '#ff007f', lane: 'rgba(128, 212, 255, 0.45)', laneGlow: '#80d4ff', star: '180, 220, 255', accent: '#00ffff', noDecor: true },
   { id: 'city', name: 'City', icon: '🏙️', bg: ['#040614', '#070b1f', '#02040d'], road: '#0b0f20', left: '#00ffff', right: '#ff007f', lane: 'rgba(128, 212, 255, 0.45)', laneGlow: '#80d4ff', star: '180, 220, 255', accent: '#00ffff' },
   { id: 'desert', name: 'Desert', icon: '🏜️', bg: ['#1a0d05', '#2a1408', '#0d0502'], road: '#1f1209', left: '#ffb347', right: '#ff5e00', lane: 'rgba(255, 200, 120, 0.45)', laneGlow: '#ffb347', star: '255, 220, 170', accent: '#ffb347' },
   { id: 'forest', name: 'Forest', icon: '🌲', bg: ['#020d06', '#04180b', '#010804'], road: '#0a1a10', left: '#39ff14', right: '#00ffa2', lane: 'rgba(130, 255, 150, 0.4)', laneGlow: '#7dff9a', star: '170, 255, 190', accent: '#39ff14' },
   { id: 'night', name: 'Night', icon: '🌃', bg: ['#01010a', '#03031a', '#000005'], road: '#080818', left: '#9d4edd', right: '#3d8bff', lane: 'rgba(170, 140, 255, 0.4)', laneGlow: '#b9a0ff', star: '200, 190, 255', accent: '#9d4edd' },
   { id: 'void', name: 'Void', icon: '🛸', bg: ['#0a0010', '#14001f', '#05000a'], road: '#0f0518', left: '#ff00ff', right: '#00ffcc', lane: 'rgba(255, 120, 255, 0.4)', laneGlow: '#ff78ff', star: '255, 150, 255', accent: '#ff00ff' }
 ];
-let roadType = 'city';
+let roadType = 'highway';
 try { const sr = localStorage.getItem('neon_racer_road'); if (sr && ROADS.some(r => r.id === sr)) roadType = sr; } catch (e) {}
 function getRoad() { return ROADS.find(r => r.id === roadType) || ROADS[0]; }
 
@@ -458,6 +459,7 @@ function hashRand(seed, i) {
 }
 
 function makeDecor(y) {
+  if (roadType === 'highway' || !roadType) return null;
   const type = roadType;
   const margin = 4;
   const side = Math.random() < 0.5 ? 'left' : 'right';
@@ -509,6 +511,7 @@ function makeDecor(y) {
 }
 
 function initAmbient() {
+  if (roadType === 'highway') { ambientParticles = []; return; }
   ambientParticles = [];
   const cfg = AMBIENT_CFG[roadType] || AMBIENT_CFG.city;
   for (let i = 0; i < cfg.count; i++) {
@@ -525,6 +528,7 @@ function initAmbient() {
 }
 
 function initRoadDecor() {
+  if (roadType === 'highway') { roadDecor = []; ambientParticles = []; return; }
   roadDecor = [];
   if (!screenWidth || !roadW) return;
   let attempts = 0;
@@ -828,7 +832,7 @@ function modeLayout() {
   let bottom;
   if (modeTab === 'mode') bottom = contentTop + MODES.length * modeStep + 12;
   else if (modeTab === 'lanes') bottom = contentTop + laneH + 12;
-  else bottom = contentTop + roadStep + roadH + 12;
+  else bottom = contentTop + 2 * roadStep + roadH + 12;
   return { cardW: cardW, x0: x0, contentTop: contentTop, modeStep: modeStep, modeH: modeH,
     laneH: laneH, gap: gap, tw: tw, roadH: roadH, roadStep: roadStep, bottom: bottom };
 }
@@ -838,9 +842,17 @@ function laneCardRect(i) {
 }
 function roadCardRect(i) {
   const M = modeLayout();
-  const row = i < 3 ? 0 : 1, col = i < 3 ? i : i - 3, inRow = row === 0 ? 3 : 2;
-  const rowW = inRow * M.tw + (inRow - 1) * M.gap, rx = M.x0 + (M.cardW - rowW) / 2;
-  return { x: rx + col * (M.tw + M.gap), y: M.contentTop + row * M.roadStep + modScroll, w: M.tw, h: M.roadH };
+  const row = i < 3 ? 0 : 1;
+  const col = i < 3 ? i : i - 3;
+  const inRow = 3;
+  const rowW = inRow * M.tw + (inRow - 1) * M.gap;
+  const rx = M.x0 + (M.cardW - rowW) / 2;
+  return {
+    x: rx + col * (M.tw + M.gap),
+    y: M.contentTop + row * M.roadStep + modScroll,
+    w: M.tw,
+    h: M.roadH
+  };
 }
 function scrollBottom(s) {
   if (s === STATE_GARAGE) return garLayout().bottom;
