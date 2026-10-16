@@ -438,6 +438,326 @@ let roadType = 'city';
 try { const sr = localStorage.getItem('neon_racer_road'); if (sr && ROADS.some(r => r.id === sr)) roadType = sr; } catch (e) {}
 function getRoad() { return ROADS.find(r => r.id === roadType) || ROADS[0]; }
 
+// ------------------------------------------------------------------
+// ROAD SIDE DECORATIONS (buildings / dunes / trees / asteroids ...)
+// ------------------------------------------------------------------
+let roadDecor = [];
+let ambientParticles = [];
+const DECOR_PER_ROAD = 11;
+const AMBIENT_CFG = {
+  city:   { count: 12, color: 'rgba(150, 200, 255, 0.30)', size: [1.2, 2.6], vx: [-14, 14], vy: [-55, -20] },
+  desert: { count: 22, color: 'rgba(255, 200, 120, 0.32)', size: [1, 2.4], vx: [-70, -25], vy: [-8, 16] },
+  forest: { count: 18, color: 'rgba(180, 255, 130, 0.55)', size: [1.4, 2.6], vx: [-16, 16], vy: [-14, 14] },
+  night:  { count: 26, color: 'rgba(200, 200, 255, 0.45)', size: [1, 2.2], vx: [-8, 8], vy: [-18, 18] },
+  void:   { count: 30, color: 'rgba(255, 140, 255, 0.50)', size: [1.2, 3], vx: [-26, 26], vy: [-40, -10] }
+};
+
+function hashRand(seed, i) {
+  const x = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function makeDecor(y) {
+  const type = roadType;
+  const margin = 4;
+  const side = Math.random() < 0.5 ? 'left' : 'right';
+  const regionStart = side === 'left' ? margin : (roadX + roadW + margin);
+  const regionEnd = side === 'left' ? (roadX - margin) : (screenWidth - margin);
+  const regionW = regionEnd - regionStart;
+  if (regionW < 10) return null;
+
+  const seed = Math.random() * 1000;
+  const d = { type: type, side: side, y: y, seed: seed, kind: 'building', w: 20, h: 40, cx: regionStart + regionW / 2 };
+
+  if (type === 'city' || type === 'night') {
+    d.kind = 'building';
+    d.w = Math.max(16, Math.min(regionW * (0.5 + Math.random() * 0.45), 110));
+    d.h = 60 + Math.random() * 130;
+    d.cx = regionStart + Math.random() * Math.max(1, regionW - d.w) + d.w / 2;
+  } else if (type === 'desert') {
+    if (Math.random() < 0.42) {
+      d.kind = 'cactus';
+      d.w = Math.max(10, Math.min(regionW * 0.7, 24));
+      d.h = 34 + Math.random() * 32;
+      d.cx = regionStart + Math.random() * Math.max(1, regionW - d.w) + d.w / 2;
+    } else {
+      d.kind = 'dune';
+      d.w = Math.max(24, regionW);
+      d.h = 40 + Math.random() * 60;
+      d.cx = regionStart + regionW / 2;
+    }
+  } else if (type === 'forest') {
+    if (Math.random() < 0.74) {
+      d.kind = 'tree';
+      d.w = Math.max(14, Math.min(regionW * 0.95, 46));
+      d.h = 55 + Math.random() * 60;
+      d.cx = regionStart + Math.random() * Math.max(1, regionW - d.w) + d.w / 2;
+    } else {
+      d.kind = 'rock';
+      d.w = Math.max(10, Math.min(regionW * 0.8, 26));
+      d.h = 12 + Math.random() * 12;
+      d.cx = regionStart + Math.random() * Math.max(1, regionW - d.w) + d.w / 2;
+    }
+  } else {
+    d.kind = Math.random() < 0.7 ? 'asteroid' : 'planet';
+    d.w = d.h = Math.max(12, Math.min(regionW * 0.85, 42));
+    d.cx = regionStart + Math.random() * Math.max(1, regionW - d.w) + d.w / 2;
+  }
+  d.w = Math.min(d.w, regionW);
+  d.cx = Math.max(regionStart + d.w / 2, Math.min(regionEnd - d.w / 2, d.cx));
+  return d;
+}
+
+function initAmbient() {
+  ambientParticles = [];
+  const cfg = AMBIENT_CFG[roadType] || AMBIENT_CFG.city;
+  for (let i = 0; i < cfg.count; i++) {
+    ambientParticles.push({
+      x: Math.random() * screenWidth,
+      y: Math.random() * screenHeight,
+      vx: cfg.vx[0] + Math.random() * (cfg.vx[1] - cfg.vx[0]),
+      vy: cfg.vy[0] + Math.random() * (cfg.vy[1] - cfg.vy[0]),
+      size: cfg.size[0] + Math.random() * (cfg.size[1] - cfg.size[0]),
+      phase: Math.random() * Math.PI * 2,
+      color: cfg.color
+    });
+  }
+}
+
+function initRoadDecor() {
+  roadDecor = [];
+  if (!screenWidth || !roadW) return;
+  let attempts = 0;
+  while (roadDecor.length < DECOR_PER_ROAD && attempts < DECOR_PER_ROAD * 5) {
+    attempts++;
+    const d = makeDecor(-Math.random() * (screenHeight + 220));
+    if (d) roadDecor.push(d);
+  }
+  initAmbient();
+}
+
+function updateAmbient(dt) {
+  for (let i = 0; i < ambientParticles.length; i++) {
+    const p = ambientParticles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (p.y > screenHeight + 24) { p.y = -20; p.x = Math.random() * screenWidth; }
+    if (p.y < -30) { p.y = screenHeight + 12; p.x = Math.random() * screenWidth; }
+    if (p.x < -24) p.x = screenWidth + 12;
+    if (p.x > screenWidth + 24) p.x = -12;
+  }
+}
+
+function updateRoadDecor(dt, speed) {
+  for (let i = roadDecor.length - 1; i >= 0; i--) {
+    const d = roadDecor[i];
+    d.y += speed * dt;
+    if (d.y > screenHeight + 160) {
+      const nd = makeDecor(-d.h - 60 - Math.random() * 240);
+      if (nd) roadDecor[i] = nd; else roadDecor.splice(i, 1);
+    }
+  }
+  updateAmbient(dt);
+}
+
+function drawDecorBuilding(d) {
+  const x = d.cx - d.w / 2, y = d.y;
+  const night = (d.type === 'night');
+  const g = ctx.createLinearGradient(x, y, x + d.w, y + d.h);
+  if (night) { g.addColorStop(0, '#0b0a1c'); g.addColorStop(1, '#04030d'); }
+  else { g.addColorStop(0, '#141c38'); g.addColorStop(1, '#080c1c'); }
+  ctx.fillStyle = g;
+  ctx.fillRect(x, y, d.w, d.h);
+  ctx.strokeStyle = night ? 'rgba(160,120,255,0.35)' : 'rgba(0,229,255,0.28)';
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(x + 0.5, y + 0.5, d.w - 1, d.h - 1);
+  if (hashRand(d.seed, 1) > 0.55) {
+    ctx.fillStyle = night ? 'rgba(160,120,255,0.45)' : 'rgba(0,229,255,0.4)';
+    ctx.fillRect(d.cx - 1, y - 10, 2, 10);
+  }
+  const cols = Math.max(2, Math.floor(d.w / 11));
+  const rows = Math.max(3, Math.floor(d.h / 14));
+  const padX = d.w * 0.12, padY = 9;
+  const cw = (d.w - padX * 2) / cols, chh = (d.h - padY - 8) / rows;
+  const wc = night ? ['#a06bff', '#00e5ff', '#ff66c4'] : ['#ffe600', '#00e5ff', '#39ff14'];
+  const prevA = ctx.globalAlpha;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const hv = hashRand(d.seed, r * 17 + c * 5);
+      if (hv < 0.42) continue;
+      const wx = x + padX + c * cw + cw * 0.2;
+      const wy = y + padY + r * chh + chh * 0.2;
+      ctx.fillStyle = wc[Math.floor(hashRand(d.seed + 7, r * 3 + c) * wc.length) % wc.length];
+      ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(gameTime * 1.2 + hv * 10));
+      ctx.fillRect(wx, wy, cw * 0.6, chh * 0.55);
+    }
+  }
+  ctx.globalAlpha = prevA;
+}
+
+function drawDecorTree(d) {
+  const x = d.cx, y = d.y, w = d.w, h = d.h;
+  ctx.save();
+  ctx.fillStyle = '#3a2412';
+  ctx.fillRect(x - w * 0.09, y + h * 0.70, w * 0.18, h * 0.30);
+  ctx.shadowColor = 'rgba(57,255,20,0.35)';
+  ctx.shadowBlur = 8;
+  for (let i = 0; i < 3; i++) {
+    const topY = y + h * 0.58 * (i / 3);
+    const baseY = topY + h * 0.46;
+    const tw = w * (0.62 + i * 0.19);
+    const g = ctx.createLinearGradient(x - tw / 2, topY, x + tw / 2, baseY);
+    g.addColorStop(0, i === 0 ? '#12702f' : '#0d5a24');
+    g.addColorStop(1, '#042d14');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(x, topY);
+    ctx.lineTo(x - tw / 2, baseY);
+    ctx.lineTo(x + tw / 2, baseY);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawDecorDune(d) {
+  const x0 = d.cx - d.w / 2, y = d.y, w = d.w, h = d.h;
+  ctx.save();
+  const g = ctx.createLinearGradient(x0, y, x0, y + h);
+  g.addColorStop(0, 'rgba(122, 76, 34, 0.9)');
+  g.addColorStop(1, 'rgba(58, 32, 12, 0.92)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(x0, y + h);
+  ctx.quadraticCurveTo(x0 + w * 0.5, y - h * 0.35, x0 + w, y + h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 179, 71, 0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x0, y + h);
+  ctx.quadraticCurveTo(x0 + w * 0.5, y - h * 0.35, x0 + w, y + h);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawDecorCactus(d) {
+  const x = d.cx, y = d.y, w = d.w, h = d.h;
+  ctx.save();
+  ctx.shadowColor = 'rgba(57,255,20,0.4)';
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = '#1f6b34';
+  ctx.strokeStyle = 'rgba(57,255,20,0.4)';
+  ctx.lineWidth = 1;
+  const stemW = w * 0.30, armW = w * 0.20;
+  ctx.beginPath(); ctx.roundRect(x - stemW / 2, y, stemW, h, stemW / 2); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(x - w * 0.5, y + h * 0.22, armW, h * 0.44, armW / 2); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(x - w * 0.5, y + h * 0.22 + h * 0.44 - armW, w * 0.5, armW, armW / 2); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(x + w * 0.5 - armW, y + h * 0.36, armW, h * 0.36, armW / 2); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(x, y + h * 0.36 + h * 0.36 - armW, w * 0.5, armW, armW / 2); ctx.fill();
+  ctx.restore();
+}
+
+function drawDecorRock(d) {
+  const x = d.cx, y = d.y + d.h / 2, rx = d.w / 2, ry = d.h / 2;
+  ctx.save();
+  ctx.fillStyle = 'rgba(62, 58, 78, 0.9)';
+  ctx.strokeStyle = 'rgba(140, 130, 170, 0.5)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  const n = 6;
+  for (let i = 0; i < n; i++) {
+    const ang = (i / n) * Math.PI * 2;
+    const rr = 0.75 + hashRand(d.seed, i) * 0.5;
+    const px = x + Math.cos(ang) * rx * rr;
+    const py = y + Math.sin(ang) * ry * rr;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+function drawDecorAsteroid(d) {
+  const x = d.cx, cy = d.y + d.h / 2, r = d.w / 2;
+  ctx.save();
+  const g = ctx.createRadialGradient(x - r * 0.3, cy - r * 0.3, r * 0.15, x, cy, r);
+  g.addColorStop(0, '#5b2a8a');
+  g.addColorStop(1, '#1b0730');
+  ctx.fillStyle = g;
+  ctx.strokeStyle = 'rgba(255, 120, 255, 0.6)';
+  ctx.lineWidth = 1.5;
+  ctx.shadowColor = 'rgba(255, 0, 255, 0.6)';
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  const n = 9;
+  for (let i = 0; i < n; i++) {
+    const ang = (i / n) * Math.PI * 2;
+    const rr = 0.78 + hashRand(d.seed, i) * 0.42;
+    const px = x + Math.cos(ang) * r * rr;
+    const py = cy + Math.sin(ang) * r * rr;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255, 160, 255, 0.18)';
+  for (let i = 0; i < 3; i++) {
+    const ang = hashRand(d.seed + 3, i) * Math.PI * 2;
+    const rr = hashRand(d.seed + 9, i) * r * 0.5;
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(ang) * rr, cy + Math.sin(ang) * rr, r * 0.16, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawDecorPlanet(d) {
+  const x = d.cx, cy = d.y + d.h / 2, r = d.w / 2;
+  ctx.save();
+  const g = ctx.createRadialGradient(x - r * 0.35, cy - r * 0.35, r * 0.1, x, cy, r);
+  g.addColorStop(0, '#ff9cf5');
+  g.addColorStop(0.5, '#a03ce0');
+  g.addColorStop(1, '#2a0a45');
+  ctx.fillStyle = g;
+  ctx.shadowColor = 'rgba(255, 100, 255, 0.7)';
+  ctx.shadowBlur = 18;
+  ctx.beginPath(); ctx.arc(x, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(0, 255, 204, 0.55)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(x, cy, r * 1.7, r * 0.42, -0.35, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+
+function drawAmbient() {
+  if (!ambientParticles.length) return;
+  ctx.save();
+  ambientParticles.forEach(p => {
+    ctx.globalAlpha = 0.3 + 0.7 * Math.abs(Math.sin(gameTime * 1.6 + p.phase));
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawRoadDecor() {
+  ctx.save();
+  for (let i = 0; i < roadDecor.length; i++) {
+    const d = roadDecor[i];
+    if (d.y > screenHeight + 170 || d.y + d.h < -170) continue;
+    if (d.kind === 'building') drawDecorBuilding(d);
+    else if (d.kind === 'tree') drawDecorTree(d);
+    else if (d.kind === 'dune') drawDecorDune(d);
+    else if (d.kind === 'cactus') drawDecorCactus(d);
+    else if (d.kind === 'rock') drawDecorRock(d);
+    else if (d.kind === 'asteroid') drawDecorAsteroid(d);
+    else if (d.kind === 'planet') drawDecorPlanet(d);
+  }
+  ctx.restore();
+  drawAmbient();
+}
+
 // CURRENCY
 let totalCoins = 0;
 try { totalCoins = parseInt(localStorage.getItem('neon_racer_coins') || '0', 10) || 0; } catch (e) {}
@@ -463,41 +783,64 @@ function getSpeedMult() { return 1 + (upgrades.speed || 0) * 0.08 + (upgrades.en
 function getSteerSpeed() { return STEER_SPEEDS[sensitivity] * (1 + (upgrades.tires || 0) * 0.05) * laneSpeedMult(); }
 
 // SCROLLABLE SCREENS (Garage & Upgrades, Mode, Achievements)
-const UPG_STEP = 74, UPG_HEADER = 84;
-const ACH_TOP = 96, ACH_CARD_H = 54, ACH_STEP = 62;
+const UPG_STEP = 74;
+const UPG_HEADER = 110;    // tall header (title + subtitle + centered BACK)
+const CONTENT_TOP = 158;   // tabbed screens: content starts below the tab row
+const ACH_TOP = 124, ACH_CARD_H = 54, ACH_STEP = 62;
+const TAB_Y = 108, TAB_H = 40, TAB_GAP = 6;
+
 let garScroll = 0, achScroll = 0, modScroll = 0, scrollTouch = null;
+let garTab = 'skins', modeTab = 'mode';
+const GAR_TABS = [{ id: 'skins', label: '🎨 CAR SKINS' }, { id: 'upgrades', label: '⚡ UPGRADES' }];
+const MODE_TABS = [{ id: 'mode', label: '🎮 MODE' }, { id: 'lanes', label: '🛣️ LANES' }, { id: 'road', label: '🌍 ROAD' }];
+
+function tabRects(n) {
+  const totalW = screenWidth - 40;
+  const w = (totalW - (n - 1) * TAB_GAP) / n;
+  const out = [];
+  for (let i = 0; i < n; i++) out.push({ x: 20 + i * (w + TAB_GAP), y: TAB_Y, w: w, h: TAB_H });
+  return out;
+}
+
 function isScrollState(s) { return s === STATE_GARAGE || s === STATE_ACHIEVEMENTS || s === STATE_MODE; }
 function achLayout() {
   const dailyHeadY = ACH_TOP, dailyStart = ACH_TOP + 18;
   const permHeadY = dailyStart + 3 * ACH_STEP + 14, permStart = permHeadY + 18;
   return { dailyHeadY: dailyHeadY, dailyStart: dailyStart, permHeadY: permHeadY, permStart: permStart, bottom: permStart + ACHIEVEMENTS.length * ACH_STEP };
 }
-// combined GARAGE & UPGRADES layout (skins first, upgrades second)
+// TABBED garage layout — only the active tab contributes to content height
 function garLayout() {
-  const skinHeadY = 98, skinStart = 114, skinStep = 98, skinH = 82;
-  const upgHeadY = skinStart + SKINS.length * skinStep + 4, upgStart = upgHeadY + 18, upgH = 64;
-  return { skinHeadY: skinHeadY, skinStart: skinStart, skinStep: skinStep, skinH: skinH, upgHeadY: upgHeadY, upgStart: upgStart, upgH: upgH, bottom: upgStart + UPGRADE_KEYS.length * UPG_STEP };
+  const contentTop = CONTENT_TOP;
+  const skinStep = 98, skinH = 82;
+  const upgStep = 74, upgH = 64;
+  const bottom = garTab === 'skins'
+    ? contentTop + SKINS.length * skinStep + 12
+    : contentTop + UPGRADE_KEYS.length * upgStep + 12;
+  return { contentTop: contentTop, skinStep: skinStep, skinH: skinH, upgStep: upgStep, upgH: upgH, bottom: bottom };
 }
-// MODE screen layout (3 sections: game mode, lanes, road type)
+// TABBED mode layout — 3 sections, only the active one contributes height
 function modeLayout() {
   const cardW = Math.min(screenWidth * 0.88, 380), x0 = screenWidth / 2 - cardW / 2;
-  const modeHeadY = 98, modeStart = 114, modeStep = 90, modeH = 78;
-  const laneHeadY = modeStart + MODES.length * modeStep + 6, laneStart = laneHeadY + 16, laneH = 100;
-  const gap = 8, tw = (cardW - gap * 2) / 3;
-  const roadHeadY = laneStart + laneH + 18, roadStart = roadHeadY + 16, roadH = 64, roadStep = 72;
-  return { cardW: cardW, x0: x0, modeHeadY: modeHeadY, modeStart: modeStart, modeStep: modeStep, modeH: modeH,
-    laneHeadY: laneHeadY, laneStart: laneStart, laneH: laneH, gap: gap, tw: tw,
-    roadHeadY: roadHeadY, roadStart: roadStart, roadH: roadH, roadStep: roadStep, bottom: roadStart + roadStep + roadH };
+  const contentTop = CONTENT_TOP;
+  const modeStep = 90, modeH = 78;
+  const laneH = 100, gap = 8, tw = (cardW - gap * 2) / 3;
+  const roadH = 64, roadStep = 72;
+  let bottom;
+  if (modeTab === 'mode') bottom = contentTop + MODES.length * modeStep + 12;
+  else if (modeTab === 'lanes') bottom = contentTop + laneH + 12;
+  else bottom = contentTop + roadStep + roadH + 12;
+  return { cardW: cardW, x0: x0, contentTop: contentTop, modeStep: modeStep, modeH: modeH,
+    laneH: laneH, gap: gap, tw: tw, roadH: roadH, roadStep: roadStep, bottom: bottom };
 }
 function laneCardRect(i) {
   const M = modeLayout();
-  return { x: M.x0 + i * (M.tw + M.gap), y: M.laneStart + modScroll, w: M.tw, h: M.laneH };
+  return { x: M.x0 + i * (M.tw + M.gap), y: M.contentTop + modScroll, w: M.tw, h: M.laneH };
 }
 function roadCardRect(i) {
   const M = modeLayout();
   const row = i < 3 ? 0 : 1, col = i < 3 ? i : i - 3, inRow = row === 0 ? 3 : 2;
   const rowW = inRow * M.tw + (inRow - 1) * M.gap, rx = M.x0 + (M.cardW - rowW) / 2;
-  return { x: rx + col * (M.tw + M.gap), y: M.roadStart + row * M.roadStep + modScroll, w: M.tw, h: M.roadH };
+  return { x: rx + col * (M.tw + M.gap), y: M.contentTop + row * M.roadStep + modScroll, w: M.tw, h: M.roadH };
 }
 function scrollBottom(s) {
   if (s === STATE_GARAGE) return garLayout().bottom;
@@ -1295,6 +1638,7 @@ function resize() {
   else clampPlayerToRoad();
   stars = Array.from({ length: Math.max(50, Math.floor((screenWidth * screenHeight) / 10000)) }, () => ({ x: Math.random() * screenWidth, y: Math.random() * screenHeight, radius: Math.random() * 1.5 + 0.5, alpha: Math.random() * 0.8 + 0.2, speed: Math.random() * 18 + 6, pulseSpeed: Math.random() * 3 + 1, pulseOffset: Math.random() * Math.PI * 2 }));
   initWeather();
+  initRoadDecor();
   garScroll = clampScroll(STATE_GARAGE, garScroll);
   achScroll = clampScroll(STATE_ACHIEVEMENTS, achScroll);
   modScroll = clampScroll(STATE_MODE, modScroll);
@@ -1314,12 +1658,14 @@ function setLanes(n) {
   applyLaneLayout();
   player.x = roadX + roadW / 2;
   player.y = screenHeight * 0.78;
+  initRoadDecor();
   soundCoin();
 }
 function setRoad(id) {
   if (!ROADS.some(r => r.id === id)) return;
   roadType = id;
   try { localStorage.setItem('neon_racer_road', id); } catch (e) {}
+  initRoadDecor();
   soundCoin();
 }
 
@@ -1507,26 +1853,36 @@ function handleActionInput(cx, cy) {
       return;
     }
   } else if (currentState === STATE_MODE) {
-    if (cx >= 16 && cx <= 110 && cy >= 20 && cy <= 68) { currentState = STATE_MENU; soundCoin(); return; }
-    if (cy < UPG_HEADER) return;
-    const M = modeLayout();
-    // Section A: game mode
-    MODES.forEach((m, idx) => {
-      const cardY = M.modeStart + idx * M.modeStep + modScroll;
-      if (cx >= M.x0 && cx <= M.x0 + M.cardW && cy >= cardY && cy <= cardY + M.modeH) {
-        gameMode = m.id; try { localStorage.setItem('neon_racer_mode', gameMode); } catch (e) {} soundCoin();
+    // --- tabs ---
+    const tabs = tabRects(MODE_TABS.length);
+    for (let i = 0; i < MODE_TABS.length; i++) {
+      const r = tabs[i];
+      if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) {
+        if (modeTab !== MODE_TABS[i].id) { modeTab = MODE_TABS[i].id; modScroll = 0; soundCoin(); }
+        return;
       }
-    });
-    // Section B: lanes
-    [3, 4, 5].forEach((n, i) => {
-      const r = laneCardRect(i);
-      if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) setLanes(n);
-    });
-    // Section C: road type
-    ROADS.forEach((rd, i) => {
-      const r = roadCardRect(i);
-      if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) setRoad(rd.id);
-    });
+    }
+    if (Math.abs(cx - midX) <= 58 && Math.abs(cy - 86) <= 17) { currentState = STATE_MENU; soundCoin(); return; }
+    if (cy < CONTENT_TOP) return;
+    const M = modeLayout();
+    if (modeTab === 'mode') {
+      MODES.forEach((m, idx) => {
+        const cardY = M.contentTop + idx * M.modeStep + modScroll;
+        if (cx >= M.x0 && cx <= M.x0 + M.cardW && cy >= cardY && cy <= cardY + M.modeH) {
+          gameMode = m.id; try { localStorage.setItem('neon_racer_mode', gameMode); } catch (e) {} soundCoin();
+        }
+      });
+    } else if (modeTab === 'lanes') {
+      [3, 4, 5].forEach((n, i) => {
+        const r = laneCardRect(i);
+        if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) setLanes(n);
+      });
+    } else {
+      ROADS.forEach((rd, i) => {
+        const r = roadCardRect(i);
+        if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) setRoad(rd.id);
+      });
+    }
   } else if (currentState === STATE_PAUSED) {
     const btnW = 200, btnH = 46, resY = midY - 15, rstY = resY + 62, quitY = rstY + 62;
     if (Math.abs(cx - midX) <= btnW / 2) {
@@ -1535,35 +1891,45 @@ function handleActionInput(cx, cy) {
       if (Math.abs(cy - quitY) <= btnH / 2) { returnToMainMenu(); return; }
     }
   } else if (currentState === STATE_GARAGE) {
-    if (cx >= 16 && cx <= 110 && cy >= 20 && cy <= 68) { currentState = STATE_MENU; soundCoin(); return; }
-    if (cy < UPG_HEADER) return;
+    // --- tabs ---
+    const tabs = tabRects(GAR_TABS.length);
+    for (let i = 0; i < GAR_TABS.length; i++) {
+      const r = tabs[i];
+      if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) {
+        if (garTab !== GAR_TABS[i].id) { garTab = GAR_TABS[i].id; garScroll = 0; soundCoin(); }
+        return;
+      }
+    }
+    if (Math.abs(cx - midX) <= 58 && Math.abs(cy - 86) <= 17) { currentState = STATE_MENU; soundCoin(); return; }
+    if (cy < CONTENT_TOP) return;
     const G = garLayout();
-    // Section A: skins
-    const skinW = Math.min(screenWidth * 0.88, 380);
-    SKINS.forEach((skin, idx) => {
-      const cardY = G.skinStart + idx * G.skinStep + garScroll, cardX = midX - skinW / 2;
-      if (cx >= cardX && cx <= cardX + skinW && cy >= cardY && cy <= cardY + G.skinH) {
-        if (unlockedSkinIds.includes(skin.id)) { selectedSkinId = skin.id; try { localStorage.setItem('neon_racer_selected_skin', selectedSkinId); } catch (e) {} soundCoin(); }
-        else soundPlayerHit();
-      }
-    });
-    // Section B: upgrades
-    const upgW = Math.min(screenWidth * 0.90, 390);
-    UPGRADE_KEYS.forEach((key, idx) => {
-      const def = UPGRADE_DEFS[key], cardY = G.upgStart + idx * UPG_STEP + garScroll, cardX = midX - upgW / 2, cur = upgrades[key] || 0;
-      const btnW = 92, btnH = 36, bx = cardX + upgW - btnW - 12, by = cardY + (G.upgH - btnH) / 2;
-      if (cx >= bx && cx <= bx + btnW && cy >= by && cy <= by + btnH) {
-        if (cur < def.max) {
-          const cost = def.costs[cur];
-          if (totalCoins >= cost) {
-            totalCoins -= cost; upgrades[key] = cur + 1; saveCoins(); saveUpgrades(); soundCoin();
-            showToast('+ ' + def.name + ' LV ' + upgrades[key], '#39ff14');
-          } else { soundPlayerHit(); showToast('NEED ' + (cost - totalCoins) + ' MORE COINS!', '#ff0055'); }
+    if (garTab === 'skins') {
+      const skinW = Math.min(screenWidth * 0.88, 380);
+      SKINS.forEach((skin, idx) => {
+        const cardY = G.contentTop + idx * G.skinStep + garScroll, cardX = midX - skinW / 2;
+        if (cx >= cardX && cx <= cardX + skinW && cy >= cardY && cy <= cardY + G.skinH) {
+          if (unlockedSkinIds.includes(skin.id)) { selectedSkinId = skin.id; try { localStorage.setItem('neon_racer_selected_skin', selectedSkinId); } catch (e) {} soundCoin(); }
+          else soundPlayerHit();
         }
-      }
-    });
+      });
+    } else {
+      const upgW = Math.min(screenWidth * 0.90, 390);
+      UPGRADE_KEYS.forEach((key, idx) => {
+        const def = UPGRADE_DEFS[key], cardY = G.contentTop + idx * G.upgStep + garScroll, cardX = midX - upgW / 2, cur = upgrades[key] || 0;
+        const btnW = 92, btnH = 36, bx = cardX + upgW - btnW - 12, by = cardY + (G.upgH - btnH) / 2;
+        if (cx >= bx && cx <= bx + btnW && cy >= by && cy <= by + btnH) {
+          if (cur < def.max) {
+            const cost = def.costs[cur];
+            if (totalCoins >= cost) {
+              totalCoins -= cost; upgrades[key] = cur + 1; saveCoins(); saveUpgrades(); soundCoin();
+              showToast('+ ' + def.name + ' LV ' + upgrades[key], '#39ff14');
+            } else { soundPlayerHit(); showToast('NEED ' + (cost - totalCoins) + ' MORE COINS!', '#ff0055'); }
+          }
+        }
+      });
+    }
   } else if (currentState === STATE_ACHIEVEMENTS) {
-    if (cx >= 16 && cx <= 110 && cy >= 20 && cy <= 68) { returnToMainMenu(); return; }
+    if (Math.abs(cx - midX) <= 58 && Math.abs(cy - 86) <= 17) { returnToMainMenu(); return; }
   } else if (currentState === STATE_GAMEOVER) {
     if (performance.now() - gameOverTimestamp >= 400) {
       if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (midY + 174)) <= 26) { returnToMainMenu(); return; }
@@ -1607,7 +1973,7 @@ function startGame() {
   if (gameMode === 'elimination') lifetimeStats.eliminationGames = (lifetimeStats.eliminationGames || 0) + 1;
   else if (gameMode === 'timetrial') lifetimeStats.timetrialGames = (lifetimeStats.timetrialGames || 0) + 1;
   else if (gameMode === 'drift') lifetimeStats.driftGames = (lifetimeStats.driftGames || 0) + 1;
-  initWeather(); markWeather(); saveStats(); checkAchievements(); assignRandomMission(); soundStart();
+  initWeather(); markWeather(); initRoadDecor(); saveStats(); checkAchievements(); assignRandomMission(); soundStart();
   dailyBump('games', 1);
   startEngineSound();
 
@@ -1770,6 +2136,7 @@ function update(dt) {
     player.x = roadX + roadW / 2 + Math.sin(gameTime * 1.5) * 12;
     player.tilt = Math.sin(gameTime * 1.5) * 0.05;
     roadScrollOffset = (roadScrollOffset + 180 * dt) % 60;
+    updateRoadDecor(dt, 180);
     dailyAchCheckTimer -= dt;
     if (dailyAchCheckTimer <= 0) { dailyAchCheckTimer = 5; initDailyAchievements(); }
     return;
@@ -1837,6 +2204,9 @@ function update(dt) {
   else score = Math.floor((Math.floor((distanceTraveled / 30) * getWeatherScoreMultiplier()) + coinsCollected * 5) * (gameMode === 'elimination' ? 2 : 1) * dMult);
   if (score > bestScore) bestScore = score;
   roadScrollOffset = (roadScrollOffset + roadTravel) % 60;
+
+  // road side scenery scrolls with the world (slightly slower = parallax)
+  updateRoadDecor(dt, currentSpeed * 0.8);
 
   // per-run stat tracking (mode / lane bests, daily achievements)
   trackRunStats();
@@ -2040,6 +2410,65 @@ function drawSectionHead(text, y, x, w, rightText, rightCol) {
     ctx.textAlign = 'right'; ctx.font = 'bold 10.5px sans-serif'; ctx.fillStyle = rightCol || '#39ff14';
     ctx.fillText(rightText, x + w - 4, y);
   }
+  ctx.restore();
+}
+
+// --- SHARED HEADER FOR TABBED / LIST SCREENS (title centered, BACK centered below) ---
+function drawScreenHeader(title, subtitle, accent) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(4, 6, 20, 0.98)';
+  ctx.fillRect(0, 0, screenWidth, UPG_HEADER);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = accent; ctx.shadowBlur = 16; ctx.fillStyle = accent;
+  fitFont(title, screenWidth - 32, 21, '900');
+  ctx.fillText(title, screenWidth / 2, 28);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#8e9bbb';
+  fitFont(subtitle, screenWidth - 32, 11, 'bold');
+  ctx.fillText(subtitle, screenWidth / 2, 52);
+  drawBtn(screenWidth / 2, 86, 112, 30, '#00ffff', '#0a1d30', '◀ BACK', 13);
+  ctx.restore();
+}
+
+function drawTabs(tabs, activeId, accent) {
+  const rects = tabRects(tabs.length);
+  ctx.save();
+  for (let i = 0; i < tabs.length; i++) {
+    const t = tabs[i], r = rects[i], sel = (t.id === activeId);
+    ctx.save();
+    if (sel) { ctx.shadowColor = accent; ctx.shadowBlur = 14; }
+    ctx.fillStyle = sel ? 'rgba(18, 35, 63, 0.96)' : 'rgba(10, 13, 30, 0.9)';
+    ctx.strokeStyle = sel ? accent : 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = sel ? 2.2 : 1.4;
+    ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = sel ? accent : '#8e9bbb';
+    let fs = 13;
+    do { ctx.font = `bold ${fs}px sans-serif`; fs -= 0.5; } while (ctx.measureText(t.label).width > r.w - 12 && fs > 7.5);
+    ctx.fillText(t.label, r.x + r.w / 2, r.y + r.h / 2);
+    if (sel) {
+      ctx.fillStyle = accent;
+      ctx.beginPath();
+      ctx.roundRect(r.x + 10, r.y + r.h - 5, r.w - 20, 3, 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawScrollHint(s) {
+  const bottom = scrollBottom(s);
+  if (screenHeight >= bottom + 12) return;
+  const cur = getScroll(s);
+  const minS = clampScroll(s, -99999);
+  if (minS >= 0) return;
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 10px sans-serif';
+  ctx.fillStyle = 'rgba(160,175,200,0.65)';
+  ctx.fillText(cur > minS + 2 ? '▼ scroll for more' : '▲ scroll up', screenWidth / 2, screenHeight - 12);
   ctx.restore();
 }
 
@@ -2600,19 +3029,8 @@ function drawAchievements() {
   });
   ctx.restore();
   // header
-  ctx.fillStyle = 'rgba(4, 6, 20, 0.98)'; ctx.fillRect(0, 0, screenWidth, UPG_HEADER);
-  drawBtn(62, 43, 88, 38, '#00ffff', '#0a1d30', '◀ BACK', 14);
-  ctx.save();
-  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 16; ctx.fillStyle = '#ffd700';
-  ctx.font = '900 22px sans-serif'; ctx.fillText('ACHIEVEMENTS', midX + 20, 36);
-  ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#39ff14'; ctx.shadowBlur = 8;
-  ctx.fillText(`${achUnlockedCount()} / ${ACHIEVEMENTS.length} UNLOCKED`, midX + 20, 56);
-  ctx.shadowBlur = 0;
-  if (clampScroll(STATE_ACHIEVEMENTS, -99999) < 0) {
-    ctx.font = '10px sans-serif'; ctx.fillStyle = '#667';
-    ctx.fillText(achScroll > clampScroll(STATE_ACHIEVEMENTS, -99999) + 2 ? '▼ scroll for more' : '▲ scroll up', midX + 20, 74);
-  }
-  ctx.restore();
+  drawScreenHeader('🏆 ACHIEVEMENTS', `${achUnlockedCount()} / ${ACHIEVEMENTS.length} UNLOCKED`, '#ffd700');
+  drawScrollHint(STATE_ACHIEVEMENTS);
 }
 
 function drawSettings() {
@@ -2648,193 +3066,163 @@ function drawSettings() {
   ctx.restore();
 }
 
-// MODE SCREEN (3 scrollable sections: Game Mode, Lanes, Road Type)
+// MODE SCREEN — TABBED (Game Mode / Lanes / Road Type)
 function drawModeSelect() {
   ctx.fillStyle = 'rgba(4, 6, 20, 0.94)'; ctx.fillRect(0, 0, screenWidth, screenHeight);
   const midX = screenWidth / 2, M = modeLayout();
   ctx.save();
-  ctx.beginPath(); ctx.rect(0, UPG_HEADER, screenWidth, screenHeight - UPG_HEADER); ctx.clip();
+  ctx.beginPath(); ctx.rect(0, CONTENT_TOP, screenWidth, screenHeight - CONTENT_TOP); ctx.clip();
 
-  // SECTION A: GAME MODE
-  drawSectionHead('🎮 GAME MODE', M.modeHeadY + modScroll, M.x0, M.cardW, null);
-  MODES.forEach((m, idx) => {
-    const cardY = M.modeStart + idx * M.modeStep + modScroll, cardX = M.x0, sel = gameMode === m.id;
-    if (cardY + M.modeH < UPG_HEADER || cardY > screenHeight) return;
-    ctx.save();
-    if (sel) { ctx.shadowColor = m.color; ctx.shadowBlur = 16; }
-    ctx.fillStyle = sel ? '#12233f' : '#0a0d1e';
-    ctx.strokeStyle = sel ? m.color : 'rgba(255,255,255,0.15)';
-    ctx.lineWidth = sel ? 2.5 : 1.5;
-    ctx.beginPath(); ctx.roundRect(cardX, cardY, M.cardW, M.modeH, 12); ctx.fill(); ctx.stroke();
-    ctx.shadowBlur = 0; ctx.font = '26px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(m.icon, cardX + 32, cardY + M.modeH / 2);
-    ctx.textAlign = 'left'; ctx.fillStyle = sel ? m.color : '#fff'; ctx.font = 'bold 15px sans-serif';
-    ctx.fillText(m.name, cardX + 62, cardY + 26);
-    ctx.fillStyle = '#8e9bbb';
-    fitFont(m.desc, M.cardW - 74, 10.5, '');
-    ctx.fillText(m.desc, cardX + 62, cardY + 50);
-    if (sel) { ctx.textAlign = 'right'; ctx.fillStyle = m.color; ctx.font = 'bold 11px sans-serif'; ctx.fillText('SELECTED ★', cardX + M.cardW - 12, cardY + 26); }
-    ctx.restore();
-  });
-
-  // SECTION B: LANES (3 cards side by side)
-  drawSectionHead('🛣️ LANES', M.laneHeadY + modScroll, M.x0, M.cardW, 'x = score bonus', '#8e9bbb');
-  [3, 4, 5].forEach((n, i) => {
-    const r = laneCardRect(i), cfg = LANE_CONFIGS[n], sel = laneChoice === n;
-    if (r.y + r.h < UPG_HEADER || r.y > screenHeight) return;
-    ctx.save();
-    if (sel) { ctx.shadowColor = cfg.color; ctx.shadowBlur = 16; }
-    ctx.fillStyle = sel ? '#12233f' : '#0a0d1e';
-    ctx.strokeStyle = sel ? cfg.color : 'rgba(255,255,255,0.15)';
-    ctx.lineWidth = sel ? 2.5 : 1.5;
-    ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill(); ctx.stroke();
-    ctx.shadowBlur = 0;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = sel ? cfg.color : '#ffffff'; ctx.font = '900 28px sans-serif';
-    ctx.fillText(String(n), r.x + r.w / 2, r.y + 24);
-    ctx.fillStyle = sel ? cfg.color : '#8e9bbb'; ctx.font = 'bold 10px sans-serif';
-    ctx.fillText('LANES', r.x + r.w / 2, r.y + 46);
-    ctx.fillStyle = '#8e9bbb'; ctx.font = '9.5px sans-serif';
-    drawWrapped(cfg.desc, r.x + r.w / 2, r.y + 62, r.w - 14, 12);
-    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 10px sans-serif';
-    ctx.fillText('x' + cfg.scoreMult.toFixed(1) + ' SCORE', r.x + r.w / 2, r.y + r.h - 10);
-    if (sel) { ctx.fillStyle = cfg.color; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'right'; ctx.fillText('★', r.x + r.w - 8, r.y + 14); }
-    ctx.restore();
-  });
-
-  // SECTION C: ROAD TYPE (5 compact cards, 2 rows)
-  drawSectionHead('🌍 ROAD TYPE', M.roadHeadY + modScroll, M.x0, M.cardW, null);
-  ROADS.forEach((rd, i) => {
-    const r = roadCardRect(i), sel = roadType === rd.id;
-    if (r.y + r.h < UPG_HEADER || r.y > screenHeight) return;
-    ctx.save();
-    if (sel) { ctx.shadowColor = rd.accent; ctx.shadowBlur = 16; }
-    ctx.fillStyle = sel ? '#12233f' : '#0a0d1e';
-    ctx.strokeStyle = sel ? rd.accent : 'rgba(255,255,255,0.15)';
-    ctx.lineWidth = sel ? 2.5 : 1.5;
-    ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill(); ctx.stroke();
-    ctx.shadowBlur = 0;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = '22px sans-serif'; ctx.fillStyle = '#ffffff';
-    ctx.fillText(rd.icon, r.x + r.w / 2, r.y + 20);
-    ctx.fillStyle = sel ? rd.accent : '#ffffff'; ctx.font = 'bold 11px sans-serif';
-    ctx.fillText(rd.name.toUpperCase() + (sel ? ' ★' : ''), r.x + r.w / 2, r.y + 41);
-    // neon edge preview strip
-    const sg = ctx.createLinearGradient(r.x + 14, 0, r.x + r.w - 14, 0);
-    sg.addColorStop(0, rd.left); sg.addColorStop(1, rd.right);
-    ctx.fillStyle = sg;
-    ctx.beginPath(); ctx.roundRect(r.x + 14, r.y + r.h - 12, r.w - 28, 4, 2); ctx.fill();
-    ctx.restore();
-  });
-  ctx.restore();
-
-  // header
-  ctx.fillStyle = 'rgba(4, 6, 20, 0.98)'; ctx.fillRect(0, 0, screenWidth, UPG_HEADER);
-  drawBtn(62, 43, 88, 38, '#00ffff', '#0a1d30', '◀ BACK', 14);
-  ctx.save();
-  const hx = (112 + screenWidth - 8) / 2;
-  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 14; ctx.fillStyle = '#00ffff';
-  fitFont('🎮 MODE & TRACK', screenWidth - 120, 22, '900');
-  ctx.fillText('🎮 MODE & TRACK', hx, 36);
-  const md = getMode();
-  ctx.shadowBlur = 0; ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = md.color;
-  ctx.fillText(`${md.icon} ${capName(md.name)} • ${laneChoice}L • ${getRoad().name}`, hx, 56);
-  if (clampScroll(STATE_MODE, -99999) < 0) {
-    ctx.font = '10px sans-serif'; ctx.fillStyle = '#667';
-    ctx.fillText(modScroll > clampScroll(STATE_MODE, -99999) + 2 ? '▼ scroll for more' : '▲ scroll up', hx, 74);
+  if (modeTab === 'mode') {
+    MODES.forEach((m, idx) => {
+      const cardY = M.contentTop + idx * M.modeStep + modScroll, cardX = M.x0, sel = gameMode === m.id;
+      if (cardY + M.modeH < CONTENT_TOP || cardY > screenHeight) return;
+      ctx.save();
+      if (sel) { ctx.shadowColor = m.color; ctx.shadowBlur = 16; }
+      ctx.fillStyle = sel ? '#12233f' : '#0a0d1e';
+      ctx.strokeStyle = sel ? m.color : 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = sel ? 2.5 : 1.5;
+      ctx.beginPath(); ctx.roundRect(cardX, cardY, M.cardW, M.modeH, 12); ctx.fill(); ctx.stroke();
+      ctx.shadowBlur = 0; ctx.font = '26px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(m.icon, cardX + 32, cardY + M.modeH / 2);
+      ctx.textAlign = 'left'; ctx.fillStyle = sel ? m.color : '#fff'; ctx.font = 'bold 15px sans-serif';
+      ctx.fillText(m.name, cardX + 62, cardY + 26);
+      ctx.fillStyle = '#8e9bbb';
+      fitFont(m.desc, M.cardW - 74, 10.5, '');
+      ctx.fillText(m.desc, cardX + 62, cardY + 50);
+      if (sel) { ctx.textAlign = 'right'; ctx.fillStyle = m.color; ctx.font = 'bold 11px sans-serif'; ctx.fillText('SELECTED ★', cardX + M.cardW - 12, cardY + 26); }
+      ctx.restore();
+    });
+  } else if (modeTab === 'lanes') {
+    [3, 4, 5].forEach((n, i) => {
+      const r = laneCardRect(i), cfg = LANE_CONFIGS[n], sel = laneChoice === n;
+      if (r.y + r.h < CONTENT_TOP || r.y > screenHeight) return;
+      ctx.save();
+      if (sel) { ctx.shadowColor = cfg.color; ctx.shadowBlur = 16; }
+      ctx.fillStyle = sel ? '#12233f' : '#0a0d1e';
+      ctx.strokeStyle = sel ? cfg.color : 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = sel ? 2.5 : 1.5;
+      ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill(); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = sel ? cfg.color : '#ffffff'; ctx.font = '900 28px sans-serif';
+      ctx.fillText(String(n), r.x + r.w / 2, r.y + 24);
+      ctx.fillStyle = sel ? cfg.color : '#8e9bbb'; ctx.font = 'bold 10px sans-serif';
+      ctx.fillText('LANES', r.x + r.w / 2, r.y + 46);
+      ctx.fillStyle = '#8e9bbb'; ctx.font = '9.5px sans-serif';
+      drawWrapped(cfg.desc, r.x + r.w / 2, r.y + 62, r.w - 14, 12);
+      ctx.fillStyle = '#ffd700'; ctx.font = 'bold 10px sans-serif';
+      ctx.fillText('x' + cfg.scoreMult.toFixed(1) + ' SCORE', r.x + r.w / 2, r.y + r.h - 10);
+      if (sel) { ctx.fillStyle = cfg.color; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'right'; ctx.fillText('★', r.x + r.w - 8, r.y + 14); }
+      ctx.restore();
+    });
+  } else {
+    ROADS.forEach((rd, i) => {
+      const r = roadCardRect(i), sel = roadType === rd.id;
+      if (r.y + r.h < CONTENT_TOP || r.y > screenHeight) return;
+      ctx.save();
+      if (sel) { ctx.shadowColor = rd.accent; ctx.shadowBlur = 16; }
+      ctx.fillStyle = sel ? '#12233f' : '#0a0d1e';
+      ctx.strokeStyle = sel ? rd.accent : 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = sel ? 2.5 : 1.5;
+      ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill(); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = '22px sans-serif'; ctx.fillStyle = '#ffffff';
+      ctx.fillText(rd.icon, r.x + r.w / 2, r.y + 20);
+      ctx.fillStyle = sel ? rd.accent : '#ffffff'; ctx.font = 'bold 11px sans-serif';
+      ctx.fillText(rd.name.toUpperCase() + (sel ? ' ★' : ''), r.x + r.w / 2, r.y + 41);
+      // neon edge preview strip
+      const sg = ctx.createLinearGradient(r.x + 14, 0, r.x + r.w - 14, 0);
+      sg.addColorStop(0, rd.left); sg.addColorStop(1, rd.right);
+      ctx.fillStyle = sg;
+      ctx.beginPath(); ctx.roundRect(r.x + 14, r.y + r.h - 12, r.w - 28, 4, 2); ctx.fill();
+      ctx.restore();
+    });
   }
   ctx.restore();
+
+  const md = getMode();
+  drawScreenHeader('🎮 MODE & TRACK', `${md.icon} ${capName(md.name)} • ${laneChoice}L • ${getRoad().name}`, md.color);
+  drawTabs(MODE_TABS, modeTab, '#00ffff');
+  drawScrollHint(STATE_MODE);
 }
 
-// COMBINED GARAGE & UPGRADES (Section A: skins, Section B: upgrades)
+// GARAGE — TABBED (Car Skins / Upgrades)
 function drawGarage() {
   ctx.fillStyle = 'rgba(4, 6, 20, 0.94)'; ctx.fillRect(0, 0, screenWidth, screenHeight);
   const midX = screenWidth / 2, G = garLayout();
   const skinW = Math.min(screenWidth * 0.88, 380), upgW = Math.min(screenWidth * 0.90, 390);
   ctx.save();
-  ctx.beginPath(); ctx.rect(0, UPG_HEADER, screenWidth, screenHeight - UPG_HEADER); ctx.clip();
+  ctx.beginPath(); ctx.rect(0, CONTENT_TOP, screenWidth, screenHeight - CONTENT_TOP); ctx.clip();
 
-  // SECTION A: CAR SKINS
-  drawSectionHead('🎨 CAR SKINS', G.skinHeadY + garScroll, midX - skinW / 2, skinW, `${unlockedSkinIds.length}/${SKINS.length} UNLOCKED`, '#ff66c4');
-  SKINS.forEach((skin, idx) => {
-    const cardY = G.skinStart + idx * G.skinStep + garScroll, cardX = midX - skinW / 2, cardH = G.skinH;
-    if (cardY + cardH < UPG_HEADER || cardY > screenHeight) return;
-    const un = unlockedSkinIds.includes(skin.id), sel = selectedSkinId === skin.id;
-    const col = skin.glow === 'rainbow' ? getRainbowColor() : skin.glow;
-    ctx.save();
-    if (skin.special) { ctx.shadowColor = getRainbowColor(120); ctx.shadowBlur = un ? 22 + Math.sin(gameTime * 4) * 6 : 8; }
-    ctx.fillStyle = sel ? '#12233f' : (skin.special ? '#0c0a24' : '#0a0d1e');
-    ctx.strokeStyle = sel ? col : (un ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.12)');
-    if (skin.special) ctx.strokeStyle = un ? getRainbowColor(60) : 'rgba(180,150,255,0.3)';
-    ctx.lineWidth = sel ? 2.5 : 1.5;
-    ctx.beginPath(); ctx.roundRect(cardX, cardY, skinW, cardH, 12); ctx.fill(); ctx.stroke();
-    ctx.shadowBlur = 0;
-    if (skin.special) {
-      // twinkling stars inside the Cosmic Nova card
+  if (garTab === 'skins') {
+    SKINS.forEach((skin, idx) => {
+      const cardY = G.contentTop + idx * G.skinStep + garScroll, cardX = midX - skinW / 2, cardH = G.skinH;
+      if (cardY + cardH < CONTENT_TOP || cardY > screenHeight) return;
+      const un = unlockedSkinIds.includes(skin.id), sel = selectedSkinId === skin.id;
+      const col = skin.glow === 'rainbow' ? getRainbowColor() : skin.glow;
       ctx.save();
-      ctx.beginPath(); ctx.roundRect(cardX, cardY, skinW, cardH, 12); ctx.clip();
-      for (let i = 0; i < 18; i++) {
-        const sx = cardX + (((i * 71 + 13) % 100) / 100) * skinW, sy = cardY + (((i * 47 + 29) % 100) / 100) * cardH;
-        ctx.globalAlpha = (un ? 0.8 : 0.3) * Math.abs(Math.sin(gameTime * 2.5 + i));
-        ctx.fillStyle = i % 3 === 0 ? getRainbowColor(i * 30) : '#ffffff';
-        ctx.fillRect(sx, sy, 2, 2);
+      if (skin.special) { ctx.shadowColor = getRainbowColor(120); ctx.shadowBlur = un ? 22 + Math.sin(gameTime * 4) * 6 : 8; }
+      ctx.fillStyle = sel ? '#12233f' : (skin.special ? '#0c0a24' : '#0a0d1e');
+      ctx.strokeStyle = sel ? col : (un ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.12)');
+      if (skin.special) ctx.strokeStyle = un ? getRainbowColor(60) : 'rgba(180,150,255,0.3)';
+      ctx.lineWidth = sel ? 2.5 : 1.5;
+      ctx.beginPath(); ctx.roundRect(cardX, cardY, skinW, cardH, 12); ctx.fill(); ctx.stroke();
+      ctx.shadowBlur = 0;
+      if (skin.special) {
+        // twinkling stars inside the Cosmic Nova card
+        ctx.save();
+        ctx.beginPath(); ctx.roundRect(cardX, cardY, skinW, cardH, 12); ctx.clip();
+        for (let i = 0; i < 18; i++) {
+          const sx = cardX + (((i * 71 + 13) % 100) / 100) * skinW, sy = cardY + (((i * 47 + 29) % 100) / 100) * cardH;
+          ctx.globalAlpha = (un ? 0.8 : 0.3) * Math.abs(Math.sin(gameTime * 2.5 + i));
+          ctx.fillStyle = i % 3 === 0 ? getRainbowColor(i * 30) : '#ffffff';
+          ctx.fillRect(sx, sy, 2, 2);
+        }
+        ctx.restore();
       }
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'left'; ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = un ? '#fff' : '#777';
+      ctx.fillText(skin.name, cardX + 24, cardY + 28);
+      ctx.font = '11.5px sans-serif'; ctx.fillStyle = un ? '#39ff14' : '#ff6688';
+      let status = un ? 'UNLOCKED' : `🔒 ${skin.reqDesc}`;
+      if (!un && skin.reqAch) status = `🔒 ${skin.reqDesc} (${achUnlockedCount()}/${ACHIEVEMENTS.length})`;
+      fitFont(status, skinW - 24 - 100, 11.5, '');
+      ctx.fillText(status, cardX + 24, cardY + 54);
+      ctx.textAlign = 'right'; ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = sel ? col : (un ? '#8e9bbb' : '#555');
+      ctx.textBaseline = 'middle';
+      ctx.fillText(sel ? 'SELECTED ★' : (un ? 'EQUIP ▶' : '🔒'), cardX + skinW - 16, cardY + cardH / 2);
       ctx.restore();
-    }
-    ctx.textBaseline = 'alphabetic';
-    ctx.textAlign = 'left'; ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = un ? '#fff' : '#777';
-    ctx.fillText(skin.name, cardX + 24, cardY + 28);
-    ctx.font = '11.5px sans-serif'; ctx.fillStyle = un ? '#39ff14' : '#ff6688';
-    let status = un ? 'UNLOCKED' : `🔒 ${skin.reqDesc}`;
-    if (!un && skin.reqAch) status = `🔒 ${skin.reqDesc} (${achUnlockedCount()}/${ACHIEVEMENTS.length})`;
-    fitFont(status, skinW - 24 - 100, 11.5, '');
-    ctx.fillText(status, cardX + 24, cardY + 54);
-    ctx.textAlign = 'right'; ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = sel ? col : (un ? '#8e9bbb' : '#555');
-    ctx.textBaseline = 'middle';
-    ctx.fillText(sel ? 'SELECTED ★' : (un ? 'EQUIP ▶' : '🔒'), cardX + skinW - 16, cardY + cardH / 2);
-    ctx.restore();
-  });
-
-  // SECTION B: UPGRADES
-  drawSectionHead('⚡ UPGRADES', G.upgHeadY + garScroll, midX - upgW / 2, upgW, `🪙 ${totalCoins}`, '#ffd700');
-  UPGRADE_KEYS.forEach((key, idx) => {
-    const def = UPGRADE_DEFS[key], cardY = G.upgStart + idx * UPG_STEP + garScroll, cardX = midX - upgW / 2, cardH = G.upgH;
-    if (cardY + cardH < UPG_HEADER || cardY > screenHeight) return;
-    const cur = upgrades[key] || 0, isMax = cur >= def.max, cost = isMax ? 0 : def.costs[cur], can = !isMax && totalCoins >= cost;
-    ctx.save();
-    ctx.fillStyle = '#0a0e20';
-    ctx.strokeStyle = can ? 'rgba(255,230,0,0.45)' : 'rgba(255,255,255,0.12)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.roundRect(cardX, cardY, upgW, cardH, 12); ctx.fill(); ctx.stroke();
-    ctx.font = '22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(def.icon, cardX + 30, cardY + cardH / 2);
-    ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(def.name, cardX + 58, cardY + 16);
-    ctx.fillStyle = '#8e9bbb';
-    fitFont(def.desc, upgW - 58 - 110, 10, '');
-    ctx.fillText(def.desc, cardX + 58, cardY + 34);
-    ctx.fillStyle = '#39ff14'; ctx.font = 'bold 10.5px sans-serif';
-    ctx.fillText(`Lv ${cur}/${def.max}`, cardX + 58, cardY + 50);
-    drawBtn(cardX + upgW - 58, cardY + cardH / 2, 92, 36, isMax ? '#778899' : (can ? '#39ff14' : '#ff7799'), isMax ? '#1a1f2e' : (can ? '#1f2b09' : '#22141a'), isMax ? 'MAXED' : `🪙 ${cost}`, 12);
-    ctx.restore();
-  });
-  ctx.restore();
-
-  // header
-  ctx.fillStyle = 'rgba(4, 6, 20, 0.98)'; ctx.fillRect(0, 0, screenWidth, UPG_HEADER);
-  drawBtn(62, 43, 88, 38, '#00ffff', '#0a1d30', '◀ BACK', 14);
-  ctx.save();
-  const hx = (112 + screenWidth - 8) / 2;
-  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.shadowColor = '#ff007f'; ctx.shadowBlur = 14; ctx.fillStyle = '#ff66c4';
-  fitFont('🚗 GARAGE & UPGRADES', screenWidth - 120, 22, '900');
-  ctx.fillText('🚗 GARAGE & UPGRADES', hx, 36);
-  ctx.shadowBlur = 0; ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#ffd700';
-  ctx.fillText(`BALANCE: 🪙 ${totalCoins}`, hx, 56);
-  if (clampScroll(STATE_GARAGE, -99999) < 0) {
-    ctx.font = '10px sans-serif'; ctx.fillStyle = '#667';
-    ctx.fillText(garScroll > clampScroll(STATE_GARAGE, -99999) + 2 ? '▼ scroll for more' : '▲ scroll up', hx, 74);
+    });
+  } else {
+    UPGRADE_KEYS.forEach((key, idx) => {
+      const def = UPGRADE_DEFS[key], cardY = G.contentTop + idx * G.upgStep + garScroll, cardX = midX - upgW / 2, cardH = G.upgH;
+      if (cardY + cardH < CONTENT_TOP || cardY > screenHeight) return;
+      const cur = upgrades[key] || 0, isMax = cur >= def.max, cost = isMax ? 0 : def.costs[cur], can = !isMax && totalCoins >= cost;
+      ctx.save();
+      ctx.fillStyle = '#0a0e20';
+      ctx.strokeStyle = can ? 'rgba(255,230,0,0.45)' : 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(cardX, cardY, upgW, cardH, 12); ctx.fill(); ctx.stroke();
+      ctx.font = '22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(def.icon, cardX + 30, cardY + cardH / 2);
+      ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = 'bold 14px sans-serif';
+      ctx.fillText(def.name, cardX + 58, cardY + 16);
+      ctx.fillStyle = '#8e9bbb';
+      fitFont(def.desc, upgW - 58 - 110, 10, '');
+      ctx.fillText(def.desc, cardX + 58, cardY + 34);
+      ctx.fillStyle = '#39ff14'; ctx.font = 'bold 10.5px sans-serif';
+      ctx.fillText(`Lv ${cur}/${def.max}`, cardX + 58, cardY + 50);
+      drawBtn(cardX + upgW - 58, cardY + cardH / 2, 92, 36, isMax ? '#778899' : (can ? '#39ff14' : '#ff7799'), isMax ? '#1a1f2e' : (can ? '#1f2b09' : '#22141a'), isMax ? 'MAXED' : `🪙 ${cost}`, 12);
+      ctx.restore();
+    });
   }
   ctx.restore();
+
+  drawScreenHeader('🚗 GARAGE & UPGRADES', `🪙 ${totalCoins} • ${unlockedSkinIds.length}/${SKINS.length} Skins • ${upgradesMaxedCount()}/${UPGRADE_KEYS.length} Upgrades`, '#ff66c4');
+  drawTabs(GAR_TABS, garTab, '#ff66c4');
+  drawScrollHint(STATE_GARAGE);
 }
 
 function drawPause() {
@@ -2897,7 +3285,7 @@ function gameLoop(now) {
   if (currentState !== STATE_PAUSED) update(dt);
   ctx.save(); ctx.scale(dpr, dpr);
   ctx.translate(shakeX, shakeY);
-  drawBackground(); drawRoad(); drawSpeedLines();
+  drawBackground(); drawRoadDecor(); drawRoad(); drawSpeedLines();
   coins.forEach(c => {
     ctx.save(); ctx.translate(c.x, c.y);
     ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14; ctx.fillStyle = '#ffd700';
