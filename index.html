@@ -444,13 +444,13 @@ function getRoad() { return ROADS.find(r => r.id === roadType) || ROADS[0]; }
 // ------------------------------------------------------------------
 let roadDecor = [];
 let ambientParticles = [];
-const DECOR_PER_ROAD = 14;
+const DECOR_PER_ROAD = 8;
 const AMBIENT_CFG = {
-  city:   { count: 12, color: 'rgba(150, 200, 255, 0.30)', size: [1.2, 2.6], vx: [-14, 14], vy: [-55, -20] },
-  desert: { count: 22, color: 'rgba(255, 200, 120, 0.32)', size: [1, 2.4], vx: [-70, -25], vy: [-8, 16] },
-  forest: { count: 18, color: 'rgba(180, 255, 130, 0.55)', size: [1.4, 2.6], vx: [-16, 16], vy: [-14, 14] },
-  night:  { count: 26, color: 'rgba(200, 200, 255, 0.45)', size: [1, 2.2], vx: [-8, 8], vy: [-18, 18] },
-  void:   { count: 30, color: 'rgba(255, 140, 255, 0.50)', size: [1.2, 3], vx: [-26, 26], vy: [-40, -10] }
+  city:   { count: 6, color: 'rgba(150, 200, 255, 0.30)', size: [1.2, 2.6], vx: [-14, 14], vy: [-55, -20] },
+  desert: { count: 10, color: 'rgba(255, 200, 120, 0.32)', size: [1, 2.4], vx: [-70, -25], vy: [-8, 16] },
+  forest: { count: 8, color: 'rgba(180, 255, 130, 0.55)', size: [1.4, 2.6], vx: [-16, 16], vy: [-14, 14] },
+  night:  { count: 12, color: 'rgba(200, 200, 255, 0.45)', size: [1, 2.2], vx: [-8, 8], vy: [-18, 18] },
+  void:   { count: 15, color: 'rgba(255, 140, 255, 0.50)', size: [1.2, 3], vx: [-26, 26], vy: [-40, -10] }
 };
 
 function hashRand(seed, i) {
@@ -579,12 +579,13 @@ function drawDecorBuilding(d) {
     ctx.fillStyle = night ? 'rgba(160,120,255,0.45)' : 'rgba(0,229,255,0.4)';
     ctx.fillRect(d.cx - 1, y - 10, 2, 10);
   }
-  const cols = Math.max(2, Math.floor(d.w / 11));
-  const rows = Math.max(3, Math.floor(d.h / 14));
+  const cols = Math.max(2, Math.floor(d.w / 14));
+  const rows = Math.max(2, Math.floor(d.h / 18));
   const padX = d.w * 0.12, padY = 9;
   const cw = (d.w - padX * 2) / cols, chh = (d.h - padY - 8) / rows;
   const wc = night ? ['#a06bff', '#00e5ff', '#ff66c4'] : ['#ffe600', '#00e5ff', '#39ff14'];
   const prevA = ctx.globalAlpha;
+  ctx.globalAlpha = 0.7;
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const hv = hashRand(d.seed, r * 17 + c * 5);
@@ -592,7 +593,6 @@ function drawDecorBuilding(d) {
       const wx = x + padX + c * cw + cw * 0.2;
       const wy = y + padY + r * chh + chh * 0.2;
       ctx.fillStyle = wc[Math.floor(hashRand(d.seed + 7, r * 3 + c) * wc.length) % wc.length];
-      ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(gameTime * 1.2 + hv * 10));
       ctx.fillRect(wx, wy, cw * 0.6, chh * 0.55);
     }
   }
@@ -604,8 +604,6 @@ function drawDecorTree(d) {
   ctx.save();
   ctx.fillStyle = '#3a2412';
   ctx.fillRect(x - w * 0.09, y + h * 0.70, w * 0.18, h * 0.30);
-  ctx.shadowColor = 'rgba(57,255,20,0.35)';
-  ctx.shadowBlur = 8;
   for (let i = 0; i < 3; i++) {
     const topY = y + h * 0.58 * (i / 3);
     const baseY = topY + h * 0.46;
@@ -648,8 +646,6 @@ function drawDecorDune(d) {
 function drawDecorCactus(d) {
   const x = d.cx, y = d.y, w = d.w, h = d.h;
   ctx.save();
-  ctx.shadowColor = 'rgba(57,255,20,0.4)';
-  ctx.shadowBlur = 8;
   ctx.fillStyle = '#1f6b34';
   ctx.strokeStyle = 'rgba(57,255,20,0.4)';
   ctx.lineWidth = 1;
@@ -690,8 +686,6 @@ function drawDecorAsteroid(d) {
   ctx.fillStyle = g;
   ctx.strokeStyle = 'rgba(255, 120, 255, 0.6)';
   ctx.lineWidth = 1.5;
-  ctx.shadowColor = 'rgba(255, 0, 255, 0.6)';
-  ctx.shadowBlur = 14;
   ctx.beginPath();
   const n = 9;
   for (let i = 0; i < n; i++) {
@@ -702,7 +696,6 @@ function drawDecorAsteroid(d) {
     if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
   }
   ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.shadowBlur = 0;
   ctx.fillStyle = 'rgba(255, 160, 255, 0.18)';
   for (let i = 0; i < 3; i++) {
     const ang = hashRand(d.seed + 3, i) * Math.PI * 2;
@@ -722,10 +715,7 @@ function drawDecorPlanet(d) {
   g.addColorStop(0.5, '#a03ce0');
   g.addColorStop(1, '#2a0a45');
   ctx.fillStyle = g;
-  ctx.shadowColor = 'rgba(255, 100, 255, 0.7)';
-  ctx.shadowBlur = 18;
   ctx.beginPath(); ctx.arc(x, cy, r, 0, Math.PI * 2); ctx.fill();
-  ctx.shadowBlur = 0;
   ctx.strokeStyle = 'rgba(0, 255, 204, 0.55)';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.ellipse(x, cy, r * 1.7, r * 0.42, -0.35, 0, Math.PI * 2); ctx.stroke();
@@ -1624,24 +1614,28 @@ function applyLaneLayout() {
   const d = getLaneCfg();
   laneCount = d.lanes;
 
-  // Reserve space for side decorations - at least 16% of screen each
-  // side, minimum 60px, maximum 180px (so desktop stays unchanged)
-  const sideReserve = Math.min(Math.max(screenWidth * 0.16, 60), 180);
+  // 1. Reserve side space for decorations, but less aggressively than before
+  const sideReserve = Math.min(Math.max(screenWidth * 0.14, 50), 150);
   const maxRoadW = screenWidth - sideReserve * 2;
 
   let desiredW;
-  if (laneCount >= 5) desiredW = Math.min(Math.max(screenWidth * 0.92, 360), 540);
-  else if (laneCount === 4) desiredW = Math.min(Math.max(screenWidth * 0.88, 340), 500);
-  else desiredW = Math.min(Math.max(screenWidth * 0.85, 320), 460);
+  if (laneCount >= 5) desiredW = screenWidth * 0.94;
+  else if (laneCount === 4) desiredW = screenWidth * 0.90;
+  else desiredW = screenWidth * 0.85;
 
+  // 2. Road width calculation
   roadW = Math.min(desiredW, maxRoadW);
-  roadW = Math.max(roadW, Math.min(laneCount * 48, maxRoadW));
+  
+  // Ensure the road doesn't get too small on 320px screens
+  roadW = Math.max(roadW, Math.min(laneCount * 46, maxRoadW));
 
   roadX = (screenWidth - roadW) / 2;
   laneWidth = roadW / laneCount;
-  player.width = Math.min(Math.max(laneWidth * 0.44, 36), 50);
-  player.width = Math.min(player.width, laneWidth * 0.8);
-  player.height = player.width * 1.86;
+  
+  // 3. MAKE CAR SMALLER (was 0.44 and max 50)
+  player.width = Math.min(Math.max(laneWidth * 0.32, 28), 42);
+  player.width = Math.min(player.width, laneWidth * 0.7);
+  player.height = player.width * 1.85;
 }
 function clampPlayerToRoad() {
   const minX = roadX + player.width / 2 + 6, maxX = roadX + roadW - player.width / 2 - 6;
@@ -2084,7 +2078,7 @@ function spawnTrafficCar() {
   const elim = gameMode === 'elimination';
   const isE = Math.random() < (elim ? 0.6 : 0.38);
   trafficCars.push({
-    x: roadX + lane * laneWidth + laneWidth / 2, y: -100, width: player.width * 0.94, height: player.height * 0.94,
+    x: roadX + lane * laneWidth + laneWidth / 2, y: -100, width: player.width * 0.88, height: player.height * 0.88,
     speed: currentSpeed * (0.35 + Math.random() * 0.35) * ws * cfg.trafficMult, isEnemy: isE, hp: 1, shootCooldown: elim ? 0.4 + Math.random() * 0.5 : 1.0 + Math.random(),
     colorPalette: isE ? { body: '#ff0033', glow: '#ff0033', light: '#ff4d6d' } : TRAFFIC_PALETTES[Math.floor(Math.random() * TRAFFIC_PALETTES.length)]
   });
