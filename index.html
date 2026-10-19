@@ -444,7 +444,7 @@ function getRoad() { return ROADS.find(r => r.id === roadType) || ROADS[0]; }
 // ------------------------------------------------------------------
 let roadDecor = [];
 let ambientParticles = [];
-const DECOR_PER_ROAD = 11;
+const DECOR_PER_ROAD = 14;
 const AMBIENT_CFG = {
   city:   { count: 12, color: 'rgba(150, 200, 255, 0.30)', size: [1.2, 2.6], vx: [-14, 14], vy: [-55, -20] },
   desert: { count: 22, color: 'rgba(255, 200, 120, 0.32)', size: [1, 2.4], vx: [-70, -25], vy: [-8, 16] },
@@ -466,43 +466,43 @@ function makeDecor(y) {
   const regionStart = side === 'left' ? margin : (roadX + roadW + margin);
   const regionEnd = side === 'left' ? (roadX - margin) : (screenWidth - margin);
   const regionW = regionEnd - regionStart;
-  if (regionW < 10) return null;
+  if (regionW < 8) return null;
 
   const seed = Math.random() * 1000;
   const d = { type: type, side: side, y: y, seed: seed, kind: 'building', w: 20, h: 40, cx: regionStart + regionW / 2 };
 
   if (type === 'city' || type === 'night') {
     d.kind = 'building';
-    d.w = Math.max(16, Math.min(regionW * (0.5 + Math.random() * 0.45), 110));
-    d.h = 60 + Math.random() * 130;
+    d.w = Math.max(20, Math.min(regionW * (0.6 + Math.random() * 0.35), 120));
+    d.h = 80 + Math.random() * 160;
     d.cx = regionStart + Math.random() * Math.max(1, regionW - d.w) + d.w / 2;
   } else if (type === 'desert') {
     if (Math.random() < 0.42) {
       d.kind = 'cactus';
-      d.w = Math.max(10, Math.min(regionW * 0.7, 24));
-      d.h = 34 + Math.random() * 32;
+      d.w = Math.max(14, Math.min(regionW * 0.7, 30));
+      d.h = 45 + Math.random() * 48;
       d.cx = regionStart + Math.random() * Math.max(1, regionW - d.w) + d.w / 2;
     } else {
       d.kind = 'dune';
       d.w = Math.max(24, regionW);
-      d.h = 40 + Math.random() * 60;
+      d.h = 55 + Math.random() * 75;
       d.cx = regionStart + regionW / 2;
     }
   } else if (type === 'forest') {
     if (Math.random() < 0.74) {
       d.kind = 'tree';
-      d.w = Math.max(14, Math.min(regionW * 0.95, 46));
-      d.h = 55 + Math.random() * 60;
+      d.w = Math.max(18, Math.min(regionW * 0.95, 55));
+      d.h = 70 + Math.random() * 85;
       d.cx = regionStart + Math.random() * Math.max(1, regionW - d.w) + d.w / 2;
     } else {
       d.kind = 'rock';
       d.w = Math.max(10, Math.min(regionW * 0.8, 26));
-      d.h = 12 + Math.random() * 12;
+      d.h = 16 + Math.random() * 18;
       d.cx = regionStart + Math.random() * Math.max(1, regionW - d.w) + d.w / 2;
     }
   } else {
     d.kind = Math.random() < 0.7 ? 'asteroid' : 'planet';
-    d.w = d.h = Math.max(12, Math.min(regionW * 0.85, 42));
+    d.w = d.h = Math.max(18, Math.min(regionW * 0.9, 55));
     d.cx = regionStart + Math.random() * Math.max(1, regionW - d.w) + d.w / 2;
   }
   d.w = Math.min(d.w, regionW);
@@ -1623,15 +1623,23 @@ const TRAFFIC_PALETTES = [
 function applyLaneLayout() {
   const d = getLaneCfg();
   laneCount = d.lanes;
-  let w;
-  if (laneCount >= 5) w = Math.min(Math.max(screenWidth * 0.94, 360), 540);
-  else if (laneCount === 4) w = Math.min(Math.max(screenWidth * 0.86, 320), 500);
-  else w = Math.min(Math.max(screenWidth * 0.78, 280), 460);
-  // never wider than the screen (fits 5 lanes on 320px phones)
-  roadW = Math.min(w, Math.max(200, screenWidth - 8));
+
+  // Reserve space for side decorations - at least 16% of screen each
+  // side, minimum 60px, maximum 180px (so desktop stays unchanged)
+  const sideReserve = Math.min(Math.max(screenWidth * 0.16, 60), 180);
+  const maxRoadW = screenWidth - sideReserve * 2;
+
+  let desiredW;
+  if (laneCount >= 5) desiredW = Math.min(Math.max(screenWidth * 0.92, 360), 540);
+  else if (laneCount === 4) desiredW = Math.min(Math.max(screenWidth * 0.88, 340), 500);
+  else desiredW = Math.min(Math.max(screenWidth * 0.85, 320), 460);
+
+  roadW = Math.min(desiredW, maxRoadW);
+  roadW = Math.max(roadW, Math.min(laneCount * 48, maxRoadW));
+
   roadX = (screenWidth - roadW) / 2;
   laneWidth = roadW / laneCount;
-  player.width = Math.min(Math.max(laneWidth * 0.44, 38), 50);
+  player.width = Math.min(Math.max(laneWidth * 0.44, 36), 50);
   player.width = Math.min(player.width, laneWidth * 0.8);
   player.height = player.width * 1.86;
 }
