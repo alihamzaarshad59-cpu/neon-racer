@@ -13,6 +13,11 @@
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Neon Racer</title>
+<meta name="description" content="Cyber highway retro-futuristic combat racer with boss battles, upgrades, and neon visuals.">
+<meta property="og:title" content="Neon Racer">
+<meta property="og:description" content="Cyber highway retro-futuristic combat racer with boss battles, upgrades, and neon visuals.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#00ffff">
 <link rel="manifest" href="manifest.json">
 <style>
@@ -86,26 +91,35 @@ function playTone(freq, type, dur, gStart, gEnd, endFreq) {
 }
 
 // ENGINE HUM SOUND
-let engineOsc = null, engineFilter = null, engineGain = null, engineRunning = false;
+let engineOsc = null, engineOsc2 = null, engineFilter = null, engineGain = null, engineGain2 = null, engineRunning = false;
 const MAX_ENGINE_SPEED = 950;
 function startEngineSound() {
   if (!soundEnabled || !audioCtx || sfxVol() <= 0 || engineRunning) return;
   try {
     const now = audioCtx.currentTime;
     engineOsc = audioCtx.createOscillator();
+    engineOsc2 = audioCtx.createOscillator();
     engineFilter = audioCtx.createBiquadFilter();
     engineGain = audioCtx.createGain();
+    engineGain2 = audioCtx.createGain();
     engineOsc.type = 'sawtooth';
-    engineOsc.frequency.setValueAtTime(60, now);
+    engineOsc.frequency.setValueAtTime(55, now);
+    engineOsc2.type = 'sine';
+    engineOsc2.frequency.setValueAtTime(27.5, now);
     engineFilter.type = 'lowpass';
-    engineFilter.frequency.setValueAtTime(400, now);
-    const initialGain = 0.03 * sfxVol();
+    engineFilter.frequency.setValueAtTime(300, now);
+    const initialGain = 0.025 * sfxVol();
     engineGain.gain.setValueAtTime(0.0001, now);
     engineGain.gain.setTargetAtTime(initialGain, now, 0.1);
+    engineGain2.gain.setValueAtTime(0.0001, now);
+    engineGain2.gain.setTargetAtTime(initialGain * 0.5, now, 0.1);
     engineOsc.connect(engineFilter);
     engineFilter.connect(engineGain);
     engineGain.connect(audioCtx.destination);
+    engineOsc2.connect(engineGain2);
+    engineGain2.connect(audioCtx.destination);
     engineOsc.start(now);
+    engineOsc2.start(now);
     engineRunning = true;
   } catch (e) {}
 }
@@ -115,25 +129,32 @@ function updateEngineSound() {
   try {
     const now = audioCtx.currentTime;
     const ratio = Math.min(1, Math.max(0, currentSpeed / MAX_ENGINE_SPEED));
-    const targetFreq = 60 + (180 - 60) * ratio;
-    const targetFilterFreq = 400 + (1000 - 400) * ratio;
-    const targetGain = (0.03 + (0.08 - 0.03) * ratio) * sfxVol();
+    const targetFreq = 55 + (220 - 55) * Math.pow(ratio, 0.7) + Math.sin(gameTime * 8) * 2;
+    const targetFilterFreq = 300 + (1400 - 300) * Math.pow(ratio, 0.8);
+    const targetGain = (0.025 + (0.10 - 0.025) * ratio) * sfxVol();
     engineOsc.frequency.setTargetAtTime(targetFreq, now, 0.1);
+    if (engineOsc2) engineOsc2.frequency.setTargetAtTime(Math.max(1, targetFreq / 2), now, 0.1);
     engineFilter.frequency.setTargetAtTime(targetFilterFreq, now, 0.1);
     engineGain.gain.setTargetAtTime(targetGain, now, 0.1);
+    if (engineGain2) engineGain2.gain.setTargetAtTime(targetGain * 0.5, now, 0.1);
   } catch (e) {}
 }
 function stopEngineSound() {
   if (!engineRunning) return;
   try {
-    if (audioCtx && engineGain) {
+    if (audioCtx) {
       const now = audioCtx.currentTime;
-      engineGain.gain.setTargetAtTime(0.0001, now, 0.1);
+      if (engineGain) engineGain.gain.setTargetAtTime(0.0001, now, 0.1);
+      if (engineGain2) engineGain2.gain.setTargetAtTime(0.0001, now, 0.1);
       const prevOsc = engineOsc;
-      setTimeout(() => { try { if (prevOsc) prevOsc.stop(); } catch (e) {} }, 200);
+      const prevOsc2 = engineOsc2;
+      setTimeout(() => {
+        try { if (prevOsc) prevOsc.stop(); } catch (e) {}
+        try { if (prevOsc2) prevOsc2.stop(); } catch (e) {}
+      }, 200);
     }
   } catch (e) {}
-  engineOsc = null; engineFilter = null; engineGain = null; engineRunning = false;
+  engineOsc = null; engineOsc2 = null; engineFilter = null; engineGain = null; engineGain2 = null; engineRunning = false;
 }
 
 // BACKGROUND MUSIC
@@ -214,7 +235,7 @@ const STATE_MENU = 0, STATE_PLAYING = 1, STATE_GAMEOVER = 2, STATE_GARAGE = 3, S
 let currentState = STATE_MENU, gameOverTimestamp = 0, gameOverReason = 'crash';
 const canvas = document.getElementById('gameCanvas'), ctx = canvas.getContext('2d');
 let screenWidth = 0, screenHeight = 0, dpr = 1, roadX = 0, roadW = 0, laneWidth = 0, roadScrollOffset = 0;
-let currentSpeed = 420, distanceTraveled = 0, score = 0, bestScore = 0, bestScoreBeforeRun = 0, coinsCollected = 0, gameTime = 0;
+let currentSpeed = 420, distanceTraveled = 0, score = 0, bonusScore = 0, bestScore = 0, bestScoreBeforeRun = 0, coinsCollected = 0, gameTime = 0;
 
 // TOAST
 let toastText = '', toastColor = '#39ff14', toastTimer = 0;
@@ -289,7 +310,6 @@ const MILESTONE_REWARDS = {
   40000: 500,
   45000: 750,
   50000: 1000
-  // 60000+: 500 coins each
 };
 function getMilestoneReward(m) {
   if (MILESTONE_REWARDS[m]) return MILESTONE_REWARDS[m];
@@ -415,7 +435,6 @@ try {
   const sl = parseInt(localStorage.getItem('neon_racer_lanes') || '0', 10);
   if (LANE_CONFIGS[sl]) laneChoice = sl;
   else {
-    // migrate from the old difficulty setting
     const sdf = localStorage.getItem('neon_racer_difficulty');
     if (sdf === 'medium') laneChoice = 4; else if (sdf === 'hard') laneChoice = 5;
   }
@@ -439,9 +458,6 @@ let roadType = 'highway';
 try { const sr = localStorage.getItem('neon_racer_road'); if (sr && ROADS.some(r => r.id === sr)) roadType = sr; } catch (e) {}
 function getRoad() { return ROADS.find(r => r.id === roadType) || ROADS[0]; }
 
-// ------------------------------------------------------------------
-// ROAD SIDE DECORATIONS (buildings / dunes / trees / asteroids ...)
-// ------------------------------------------------------------------
 let roadDecor = [];
 let ambientParticles = [];
 const DECOR_PER_ROAD = 8;
@@ -778,8 +794,8 @@ function getSteerSpeed() { return STEER_SPEEDS[sensitivity] * (1 + (upgrades.tir
 
 // SCROLLABLE SCREENS (Garage & Upgrades, Mode, Achievements)
 const UPG_STEP = 74;
-const UPG_HEADER = 110;    // tall header (title + subtitle + centered BACK)
-const CONTENT_TOP = 158;   // tabbed screens: content starts below the tab row
+const UPG_HEADER = 110;
+const CONTENT_TOP = 158;
 const ACH_TOP = 124, ACH_CARD_H = 54, ACH_STEP = 62;
 const TAB_Y = 108, TAB_H = 40, TAB_GAP = 6;
 
@@ -802,7 +818,6 @@ function achLayout() {
   const permHeadY = dailyStart + 3 * ACH_STEP + 14, permStart = permHeadY + 18;
   return { dailyHeadY: dailyHeadY, dailyStart: dailyStart, permHeadY: permHeadY, permStart: permStart, bottom: permStart + ACHIEVEMENTS.length * ACH_STEP };
 }
-// TABBED garage layout — only the active tab contributes to content height
 function garLayout() {
   const contentTop = CONTENT_TOP;
   const skinStep = 98, skinH = 82;
@@ -812,7 +827,6 @@ function garLayout() {
     : contentTop + UPGRADE_KEYS.length * upgStep + 12;
   return { contentTop: contentTop, skinStep: skinStep, skinH: skinH, upgStep: upgStep, upgH: upgH, bottom: bottom };
 }
-// TABBED mode layout — 3 sections, only the active one contributes height
 function modeLayout() {
   const cardW = Math.min(screenWidth * 0.88, 380), x0 = screenWidth / 2 - cardW / 2;
   const contentTop = CONTENT_TOP;
@@ -921,7 +935,7 @@ try {
   if (nb) { const nbn = parseInt(nb, 10); if (!isNaN(nbn) && nbn > bestScore) bestScore = nbn; }
 } catch (e) {}
 
-// BEST SCORE PER LANE MODE (legacy keys: easy = 3 lanes, medium = 4, hard = 5)
+// BEST SCORE PER LANE MODE
 let bestByDiff = { easy: 0, medium: 0, hard: 0 }, bestDiffBeforeRun = 0;
 try {
   const sbd = localStorage.getItem('neon_racer_best_diff');
@@ -929,7 +943,6 @@ try {
   else bestByDiff.easy = bestScore;
 } catch (e) { bestByDiff.easy = bestScore; }
 
-// EXTRA LIFETIME STATS (separate localStorage keys)
 function readNumKey(k) {
   try { const n = parseInt(localStorage.getItem(k) || '0', 10); return isNaN(n) ? 0 : n; } catch (e) { return 0; }
 }
@@ -950,7 +963,6 @@ function readNumKey(k) {
   ls.hardModeBestScore = Math.max(ls.hardModeBestScore || 0, bestByDiff.hard || 0);
 })();
 
-// cleanup of the removed ghost system data (harmless if missing)
 try { localStorage.removeItem('neon_racer_ghost'); localStorage.removeItem('neon_racer_ghost_enabled'); } catch (e) {}
 
 function saveStats() {
@@ -973,7 +985,6 @@ function saveStats() {
   } catch (e) {}
 }
 
-// live per-run stat tracking (memory only, persisted by saveStats)
 function trackRunStats() {
   const k = DIFF_STAT[diffKey()];
   if (k && score > (lifetimeStats[k] || 0)) lifetimeStats[k] = score;
@@ -993,7 +1004,6 @@ function markWeather() {
 }
 
 // ACHIEVEMENTS (48 total)
-// NOTE: tune this if Time Trial 5,000 feels too hard (Time Trial lasts only 30 seconds)
 const TIMETRIAL_ACH_TARGET = 5000;
 const A = (id, name, desc, target, prog) => ({ id: id, name: name, desc: desc, target: target, prog: prog });
 const pGames = () => lifetimeStats.totalGames || 0;
@@ -1077,7 +1087,7 @@ function unlockAchievement(id) {
   saveCoins();
   soundMissionComplete();
   const slot = floatingTexts.filter(f => f.isAch).length;
-  floatingTexts.push({ text: `🏆 ${ach.name.toUpperCase()}! +100🪙`, x: screenWidth / 2, y: screenHeight * 0.26 + slot * 26, vy: 40, alpha: 1, decay: 1.1, color: '#ffd700', size: 15, isAch: true });
+  floatingTexts.push({ text: '🏆 ' + ach.name.toUpperCase() + '! +100🪙', x: screenWidth / 2, y: screenHeight * 0.26 + slot * 26, vy: 40, alpha: 1, decay: 1.1, color: '#ffd700', size: 15, isAch: true });
   for (let p = 0; p < 25; p++) {
     const ang = Math.random() * Math.PI * 2, spd = Math.random() * 200 + 40;
     particles.push({ x: screenWidth / 2, y: screenHeight * 0.28, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, size: 3.5, color: '#ffd700', alpha: 1, decay: 2 });
@@ -1183,7 +1193,7 @@ const DAILY_CHALLENGES = [
   { id: 3, text: 'Collect 25 coins in one run', target: 25, type: 'coins' },
   { id: 4, text: 'Defeat a boss', target: 1, type: 'boss' }
 ];
-function getTodayStr() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function getTodayStr() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 let dailyDate = getTodayStr(), dailyProgress = 0, dailyCompleted = false;
 function initDailyChallenge() {
   const today = getTodayStr();
@@ -1258,7 +1268,7 @@ function checkSkinUnlocks() {
   if (nu) { try { localStorage.setItem('neon_racer_unlocked_skins', JSON.stringify(unlockedSkinIds)); } catch (e) {} checkAchievements(); }
 }
 function getSelectedSkin() { return SKINS.find(s => s.id === selectedSkinId) || SKINS[0]; }
-function getRainbowColor(off) { return `hsl(${((gameTime * 120 + (off || 0)) % 360)}, 100%, 55%)`; }
+function getRainbowColor(off) { return 'hsl(' + ((gameTime * 120 + (off || 0)) % 360) + ', 100%, 55%)'; }
 
 // DAILY LOGIN REWARDS
 const DAILY_REWARDS = [50, 100, 150, 200, 300, 400, 500];
@@ -1280,7 +1290,7 @@ function claimDailyReward() {
   if (!rewardPopup) return;
   const day = rewardDay, coinsR = DAILY_REWARDS[day - 1];
   totalCoins += coinsR; saveCoins();
-  let msg = `🎁 DAY ${day}: +${coinsR} 🪙`;
+  let msg = '🎁 DAY ' + day + ': +' + coinsR + ' 🪙';
   if (day === 7) {
     const locked = SKINS.filter(s => !unlockedSkinIds.includes(s.id) && !s.reqAch && s.reqScore <= 20000);
     if (locked.length) {
@@ -1317,7 +1327,7 @@ function updateMissionProgress() {
   else if (currentMission.id === 'survive_time') missionProgress = Math.floor(gameTime);
   else if (currentMission.id === 'reach_score') missionProgress = score;
   if (missionProgress >= currentMission.target) {
-    score += currentMission.reward; soundMissionComplete();
+    bonusScore += currentMission.reward; soundMissionComplete();
     floatingTexts.push({ text: 'MISSION COMPLETE! +' + currentMission.reward, x: screenWidth / 2, y: screenHeight * 0.38, vy: 60, alpha: 1, decay: 1.8, color: '#39ff14' });
     const cands = missionPool().filter(m => m.id !== currentMission.id);
     currentMission = Object.assign({}, cands[Math.floor(Math.random() * cands.length)] || MISSION_TEMPLATES[1]);
@@ -1341,10 +1351,11 @@ function initWeather() {
   rainDrops = Array.from({ length: 65 }, () => ({ x: Math.random() * (screenWidth || 400), y: Math.random() * (screenHeight || 700), l: Math.random() * 16 + 10, s: Math.random() * 500 + 600 }));
   snowFlakes = Array.from({ length: 50 }, () => ({ x: Math.random() * (screenWidth || 400), y: Math.random() * (screenHeight || 700), r: Math.random() * 2.2 + 1.2, vy: Math.random() * 70 + 40, sw: Math.random() * 2.5 + 1 }));
 }
-function updateWeather(dt) {
+function updateWeather(dt, slowMotionFactor) {
   if (currentState !== STATE_PLAYING || boss !== null) return;
-  if (weatherTransition < 1.0) weatherTransition = Math.min(1.0, weatherTransition + dt * 0.5);
-  weatherTimer -= dt;
+  const sFactor = slowMotionFactor || 1.0;
+  if (weatherTransition < 1.0) weatherTransition = Math.min(1.0, weatherTransition + dt * 0.5 * sFactor);
+  weatherTimer -= dt * sFactor;
   if (weatherTimer <= 0) {
     weatherTimer = 30 + Math.random() * 30;
     prevWeather = currentWeather;
@@ -1353,10 +1364,10 @@ function updateWeather(dt) {
     weatherTransition = 0.0;
     soundPowerup();
     const w = WEATHER_DEFS[currentWeather];
-    floatingTexts.push({ text: `WEATHER: ${w.icon} ${w.name}${w.mult > 1 ? (' x' + w.mult) : ''}`, x: screenWidth / 2, y: screenHeight * 0.28, vy: 40, alpha: 1, decay: 2.2, color: w.color });
+    floatingTexts.push({ text: 'WEATHER: ' + w.icon + ' ' + w.name + (w.mult > 1 ? (' x' + w.mult) : ''), x: screenWidth / 2, y: screenHeight * 0.28, vy: 40, alpha: 1, decay: 2.2, color: w.color });
   }
-  rainDrops.forEach(rd => { rd.y += rd.s * dt; rd.x -= 60 * dt; if (rd.y > screenHeight) { rd.y = -20; rd.x = Math.random() * screenWidth; } });
-  snowFlakes.forEach(sf => { sf.y += sf.vy * dt; sf.x += Math.sin(gameTime * sf.sw) * 30 * dt; if (sf.y > screenHeight) { sf.y = -10; sf.x = Math.random() * screenWidth; } });
+  rainDrops.forEach(rd => { rd.y += rd.s * dt * sFactor; rd.x -= 60 * dt * sFactor; if (rd.y > screenHeight) { rd.y = -20; rd.x = Math.random() * screenWidth; } });
+  snowFlakes.forEach(sf => { sf.y += sf.vy * dt * sFactor; sf.x += Math.sin(gameTime * sf.sw) * 30 * dt * sFactor; if (sf.y > screenHeight) { sf.y = -10; sf.x = Math.random() * screenWidth; } });
 }
 function getWeatherScoreMultiplier() {
   const c = WEATHER_DEFS[currentWeather].mult, p = WEATHER_DEFS[prevWeather].mult;
@@ -1378,7 +1389,6 @@ function checkBossSpawn() {
 }
 function spawnBoss() {
   lastBossThreshold = Math.floor(score / 5000);
-  // Mega boss on 10th, 20th, 30th... spawn (i.e., when 9, 19, 29 already defeated)
   const isMega = (totalBossesDefeated > 0 && (totalBossesDefeated + 1) % 10 === 0);
   if (isMega) {
     boss = {
@@ -1398,21 +1408,22 @@ function spawnBoss() {
       hp: maxHp, maxHp: maxHp, sinOffset: 0, shootTimer: 0, dropCarTimer: 2.5,
       flashTimer: 0, telegraphTimer: 0, telegraphX: 0, strikeActive: 0
     };
-    floatingTexts.push({ text: `⚠️ ${bDef.name} APPROACHING! ⚠️`, x: screenWidth / 2, y: screenHeight * 0.3, vy: 40, alpha: 1, decay: 2.2, color: bDef.color });
+    floatingTexts.push({ text: '⚠️ ' + bDef.name + ' APPROACHING! ⚠️', x: screenWidth / 2, y: screenHeight * 0.3, vy: 40, alpha: 1, decay: 2.2, color: bDef.color });
   }
 }
 
-function updateBoss(dt) {
+function updateBoss(dt, slowMotionFactor) {
   if (!boss) return;
-  if (boss.flashTimer > 0) boss.flashTimer -= dt;
-  if (boss.strikeActive > 0) boss.strikeActive -= dt;
+  const sFactor = slowMotionFactor || 1.0;
+  if (boss.flashTimer > 0) boss.flashTimer -= dt * sFactor;
+  if (boss.strikeActive > 0) boss.strikeActive -= dt * sFactor;
 
   if (boss.isMega) {
     if (boss.chargeState === 0) {
-      if (boss.y < boss.targetY) { boss.y += 200 * dt; if (boss.y > boss.targetY) boss.y = boss.targetY; }
-      boss.sinOffset += dt * 2.5;
+      if (boss.y < boss.targetY) { boss.y += 200 * dt * sFactor; if (boss.y > boss.targetY) boss.y = boss.targetY; }
+      boss.sinOffset += dt * 2.5 * sFactor;
       boss.x = (roadX + roadW / 2) + Math.sin(boss.sinOffset) * ((roadW / 2) - (boss.width / 2) - 14);
-      boss.chargeTimer -= dt;
+      boss.chargeTimer -= dt * sFactor;
       if (boss.chargeTimer <= 0 && boss.y >= boss.targetY - 10) {
         boss.chargeState = 1;
         boss.chargeTimer = 0.6;
@@ -1422,10 +1433,10 @@ function updateBoss(dt) {
     } else if (boss.chargeState === 1) {
       boss.y = Math.max(70, boss.targetY - 25);
       boss.x += (Math.random() - 0.5) * 8;
-      boss.chargeTimer -= dt;
+      boss.chargeTimer -= dt * sFactor;
       if (boss.chargeTimer <= 0) boss.chargeState = 2;
     } else if (boss.chargeState === 2) {
-      boss.y += 620 * dt;
+      boss.y += 620 * dt * sFactor;
       for (let p = 0; p < 2; p++) {
         particles.push({ x: boss.x + (Math.random() - 0.5) * boss.width * 0.7, y: boss.y - boss.height / 2, vx: (Math.random() - 0.5) * 50, vy: -120, size: 4, color: '#b026ff', alpha: 1, decay: 2.0 });
       }
@@ -1436,12 +1447,15 @@ function updateBoss(dt) {
         } else {
           playerHP -= 1; screenDamageFlash = 0.45; screenDamageFlashColor = 'rgba(176, 38, 255, 0.5)'; soundPlayerHit();
           triggerScreenShake(8, 0.3);
-          if (playerHP <= 0) { triggerGameOver(); return; }
+          if (playerHP <= 0) {
+            triggerGameOver();
+            return;
+          }
         }
       }
       if (boss.y >= screenHeight * 0.72) boss.chargeState = 3;
     } else if (boss.chargeState === 3) {
-      boss.y -= 380 * dt;
+      boss.y -= 380 * dt * sFactor;
       if (boss.y <= boss.baseTargetY) {
         boss.y = boss.baseTargetY;
         boss.targetY = boss.baseTargetY;
@@ -1450,16 +1464,16 @@ function updateBoss(dt) {
       }
     }
   } else {
-    if (boss.y < boss.targetY) { boss.y += 180 * dt; if (boss.y > boss.targetY) boss.y = boss.targetY; }
-    boss.sinOffset += dt * 1.8;
+    if (boss.y < boss.targetY) { boss.y += 180 * dt * sFactor; if (boss.y > boss.targetY) boss.y = boss.targetY; }
+    boss.sinOffset += dt * 1.8 * sFactor;
     boss.x = (roadX + roadW / 2) + Math.sin(boss.sinOffset) * ((roadW / 2) - (boss.width / 2) - 16);
   }
 
   // ATTACK LOGIC
-  boss.shootTimer += dt;
+  boss.shootTimer += dt * sFactor;
   if (boss.isMega) {
     if (boss.telegraphTimer > 0) {
-      boss.telegraphTimer -= dt;
+      boss.telegraphTimer -= dt * sFactor;
       if (boss.telegraphTimer <= 0) {
         soundLightning(); boss.strikeActive = 0.25; const sx = boss.telegraphX;
         for (let p = 0; p < 35; p++) particles.push({ x: sx + (Math.random() - 0.5) * 38, y: Math.random() * screenHeight, vx: (Math.random() - 0.5) * 130, vy: (Math.random() - 0.5) * 130, size: 3.5, color: '#ffe600', alpha: 1, decay: 2.8 });
@@ -1470,7 +1484,10 @@ function updateBoss(dt) {
           } else {
             playerHP -= 1; screenDamageFlash = 0.45; screenDamageFlashColor = 'rgba(255, 220, 0, 0.5)'; soundPlayerHit();
             triggerScreenShake(8, 0.3);
-            if (playerHP <= 0) { triggerGameOver(); return; }
+            if (playerHP <= 0) {
+              triggerGameOver();
+              return;
+            }
           }
         }
       }
@@ -1513,7 +1530,7 @@ function updateBoss(dt) {
         });
       } else if (boss.type === 'electric') {
         if (boss.telegraphTimer > 0) {
-          boss.telegraphTimer -= dt;
+          boss.telegraphTimer -= dt * sFactor;
           if (boss.telegraphTimer <= 0) {
             soundLightning(); boss.strikeActive = 0.25; const sx = boss.telegraphX;
             for (let p = 0; p < 30; p++) particles.push({ x: sx + (Math.random() - 0.5) * 36, y: Math.random() * screenHeight, vx: (Math.random() - 0.5) * 120, vy: (Math.random() - 0.5) * 120, size: 3.5, color: '#ffe600', alpha: 1, decay: 2.8 });
@@ -1524,7 +1541,10 @@ function updateBoss(dt) {
               } else {
                 playerHP -= 1; screenDamageFlash = 0.45; screenDamageFlashColor = 'rgba(255, 220, 0, 0.5)'; soundPlayerHit();
                 triggerScreenShake(8, 0.3);
-                if (playerHP <= 0) { triggerGameOver(); return; }
+                if (playerHP <= 0) {
+                  triggerGameOver();
+                  return;
+                }
               }
             }
           }
@@ -1535,7 +1555,7 @@ function updateBoss(dt) {
     }
   }
 
-  boss.dropCarTimer += dt;
+  boss.dropCarTimer += dt * sFactor;
   const dropLimit = boss.isMega ? 3.5 : 4.2;
   if (boss.dropCarTimer >= dropLimit && boss.y >= boss.baseTargetY - 10) {
     boss.dropCarTimer = 0;
@@ -1562,7 +1582,7 @@ function defeatBoss() {
   if (wasMega) {
     triggerScreenShake(16, 0.7);
     const megaPts = diffScore(2000);
-    score += megaPts;
+    bonusScore += megaPts;
     totalCoins += 10;
     coinsCollected += 10;
     saveCoins();
@@ -1580,7 +1600,7 @@ function defeatBoss() {
   } else {
     triggerScreenShake(10, 0.4);
     const bossPts = diffScore(500);
-    score += bossPts;
+    bonusScore += bossPts;
     lifetimeStats.bossesDefeated = (lifetimeStats.bossesDefeated || 0) + 1;
     saveStats();
     checkAchievements();
@@ -1614,7 +1634,6 @@ function applyLaneLayout() {
   const d = getLaneCfg();
   laneCount = d.lanes;
 
-  // 1. Reserve side space for decorations, but less aggressively than before
   const sideReserve = Math.min(Math.max(screenWidth * 0.14, 50), 150);
   const maxRoadW = screenWidth - sideReserve * 2;
 
@@ -1623,16 +1642,12 @@ function applyLaneLayout() {
   else if (laneCount === 4) desiredW = screenWidth * 0.90;
   else desiredW = screenWidth * 0.85;
 
-  // 2. Road width calculation
   roadW = Math.min(desiredW, maxRoadW);
-  
-  // Ensure the road doesn't get too small on 320px screens
   roadW = Math.max(roadW, Math.min(laneCount * 46, maxRoadW));
 
   roadX = (screenWidth - roadW) / 2;
   laneWidth = roadW / laneCount;
   
-  // 3. PLAYER CAR SIZE
   player.width = Math.min(Math.max(laneWidth * 0.42, 34), 52);
   player.width = Math.min(player.width, laneWidth * 0.7);
   player.height = player.width * 1.85;
@@ -1665,7 +1680,6 @@ function setLanes(n) {
   if (n === laneChoice) { soundCoin(); return; }
   laneChoice = n;
   try { localStorage.setItem('neon_racer_lanes', String(n)); } catch (e) {}
-  // reset active entities when switching lanes
   trafficCars = []; playerBullets = []; enemyBullets = []; coins = []; powerups = []; particles = []; floatingTexts = [];
   boss = null;
   game.nearMissPopups = [];
@@ -1820,7 +1834,6 @@ canvas.addEventListener('mousedown', e => {
 });
 window.addEventListener('mouseup', () => { keyLeft = false; keyRight = false; });
 
-// Main menu is vertically shifted up a little on short screens so every button stays visible
 function menuShift() { return Math.min(0, screenHeight / 2 - 232); }
 function menuBtnW(base) { return Math.min(base, screenWidth - 24); }
 
@@ -1867,7 +1880,6 @@ function handleActionInput(cx, cy) {
       return;
     }
   } else if (currentState === STATE_MODE) {
-    // --- tabs ---
     const tabs = tabRects(MODE_TABS.length);
     for (let i = 0; i < MODE_TABS.length; i++) {
       const r = tabs[i];
@@ -1905,7 +1917,6 @@ function handleActionInput(cx, cy) {
       if (Math.abs(cy - quitY) <= btnH / 2) { returnToMainMenu(); return; }
     }
   } else if (currentState === STATE_GARAGE) {
-    // --- tabs ---
     const tabs = tabRects(GAR_TABS.length);
     for (let i = 0; i < GAR_TABS.length; i++) {
       const r = tabs[i];
@@ -1956,7 +1967,7 @@ function handleActionInput(cx, cy) {
 function startGame() {
   initDailyChallenge(); initDailyAchievements(); currentState = STATE_PLAYING;
   applyLaneLayout();
-  score = 0; distanceTraveled = 0; coinsCollected = 0; gameTime = 0; gameOverReason = 'crash';
+  score = 0; bonusScore = 0; distanceTraveled = 0; coinsCollected = 0; gameTime = 0; gameOverReason = 'crash';
   bestScoreBeforeRun = bestScore;
   bestDiffBeforeRun = bestByDiff[diffKey()] || 0;
   currentSpeed = 420 * getSpeedMult() * getLaneCfg().speedMult;
@@ -1966,7 +1977,6 @@ function startGame() {
   lastBossThreshold = 0; boss = null; totalBossesDefeated = 0;
   runHitTaken = false; runNoHitTime = 0; runPrevHP = playerHP; achCheckTimer = 0;
 
-  // milestones, kill streak, shake reset
   nextMilestone = 5000; milestonesReached = 0;
   milestonePopup = { score: 0, reward: 0, timer: 0, active: false };
   killStreakCount = 0; killStreakTimer = 0; lastKillTime = 0;
@@ -1991,7 +2001,6 @@ function startGame() {
   dailyBump('games', 1);
   startEngineSound();
 
-  // first-time tutorial (game stays paused until it is finished / skipped)
   if (!tutorialDone) {
     tutorialActive = true; tutorialStep = 0;
     stopEngineSound();
@@ -2011,29 +2020,34 @@ function triggerGameOver() {
   if (timeUp && gameMode === 'timetrial') dailyMax('tt', score);
   saveDailyAch();
 
-  // ONE MORE RUN HOOK (compared against your best on this lane mode)
   const prevBest = bestDiffBeforeRun;
   const diff = prevBest - score;
   if (prevBest === 0) {
     gameOverHookMain = '🏁 FIRST RUN! Set a new record!';
   } else if (score > prevBest) {
-    gameOverHookMain = '🎉 NEW HIGH SCORE!';
+    if (score - prevBest < 100) {
+      gameOverHookMain = '🎉 NEW HIGH SCORE! Only +' + (score - prevBest) + ' more!';
+    } else {
+      gameOverHookMain = '🎉 NEW HIGH SCORE!';
+    }
   } else if (diff <= 100) {
-    gameOverHookMain = `🔥 SO CLOSE! Only ${diff} points from your best!`;
+    gameOverHookMain = '🔥 SO CLOSE! Only ' + diff + ' points from your best!';
   } else if (diff <= 500) {
-    gameOverHookMain = `💪 You were ${diff} points from your best!`;
+    gameOverHookMain = '💪 You were ' + diff + ' points from your best!';
   } else if (diff <= 2000) {
-    gameOverHookMain = `⚡ ${diff} points away from your best. Try again!`;
+    gameOverHookMain = '⚡ ' + diff + ' points away from your best. Try again!';
   } else {
-    gameOverHookMain = `🎯 Your best: ${prevBest}. You can do better!`;
+    gameOverHookMain = '🎯 Your best: ' + prevBest + '. You can do better!';
   }
   gameOverHookSub = '';
   if (comboKills >= 8 && comboKills <= 9) {
-    gameOverHookSub = `🎯 ${10 - comboKills} more kills for x2 COMBO!`;
+    gameOverHookSub = '🎯 ' + (10 - comboKills) + ' more kills for x2 COMBO!';
+  } else if (comboKills >= 5 && comboKills <= 7) {
+    gameOverHookSub = '🎯 Just ' + (10 - comboKills) + ' more kills for x2 COMBO!';
   } else if (comboKills >= 18 && comboKills <= 19) {
-    gameOverHookSub = `🎯 ${20 - comboKills} more kills for x3 COMBO!`;
-  } else if (boss && boss.hp > 0 && boss.hp < 20) {
-    gameOverHookSub = `👹 Boss had only ${boss.hp} HP left!`;
+    gameOverHookSub = '🎯 ' + (20 - comboKills) + ' more kills for x3 COMBO!';
+  } else if (boss && boss.hp > 0 && boss.hp < 30) {
+    gameOverHookSub = '👹 Boss had only ' + boss.hp + ' HP left!';
   }
 
   saveStats();
@@ -2044,9 +2058,9 @@ function triggerGameOver() {
 
   const hookEl = document.getElementById('gameOverHook');
   if (hookEl) {
-    let hookHtml = `<div>${gameOverHookMain}</div>`;
+    let hookHtml = '<div>' + gameOverHookMain + '</div>';
     if (gameOverHookSub) {
-      hookHtml += `<div style="font-size: 11.5px; margin-top: 3px; color: #ffe600; opacity: 0.95;">${gameOverHookSub}</div>`;
+      hookHtml += '<div style="font-size: 11.5px; margin-top: 3px; color: #ffe600; opacity: 0.95;">' + gameOverHookSub + '</div>';
     }
     hookEl.innerHTML = hookHtml;
     hookEl.style.display = 'block';
@@ -2066,7 +2080,6 @@ function spawnTrafficCar() {
   trafficCars.forEach(c => { if (c.y < 240) { const idx = laneIndexOf(c.x); if (idx >= 0 && idx < laneCount && !occupied.includes(idx)) occupied.push(idx); } });
   const maxOccupied = laneCount >= 5 ? 3 : 2;
   if (occupied.length >= maxOccupied) return;
-  // don't drop a car on top of a freshly spawned coin / powerup
   const itemLanes = [];
   coins.concat(powerups).forEach(it => { if (it.y < 110) { const idx = laneIndexOf(it.x); if (!itemLanes.includes(idx)) itemLanes.push(idx); } });
   const avail = [];
@@ -2084,7 +2097,6 @@ function spawnTrafficCar() {
   });
 }
 
-// Pick a lane for a coin / powerup that has no traffic car (or other pickup) where it would spawn / catch up
 function pickFreeLane(spawnY) {
   const free = [];
   for (let l = 0; l < laneCount; l++) {
@@ -2111,7 +2123,7 @@ function applyPowerup(type) {
   if (type === 'health') dailyBump('healers', 1);
   if (type === 'shield') {
     shieldTimer = 8.0 + (upgrades.shield || 0) * 2;
-    floatingTexts.push({ text: `SHIELD ACTIVE (${shieldTimer.toFixed(0)}s)!`, x: player.x, y: player.y - 40, vy: 50, alpha: 1, decay: 2, color: '#00e5ff' });
+    floatingTexts.push({ text: 'SHIELD ACTIVE (' + shieldTimer.toFixed(0) + 's)!', x: player.x, y: player.y - 40, vy: 50, alpha: 1, decay: 2, color: '#00e5ff' });
   } else if (type === 'rapid') {
     rapidFireTimer = 7.0;
     floatingTexts.push({ text: 'RAPID FIRE!', x: player.x, y: player.y - 40, vy: 50, alpha: 1, decay: 2, color: '#ffe600' });
@@ -2121,7 +2133,6 @@ function applyPowerup(type) {
   }
 }
 
-// visual-only effects
 function updateEffects(dt) {
   for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx * dt; p.y += p.vy * dt; if ((p.alpha -= p.decay * dt) <= 0) particles.splice(i, 1); }
   for (let i = floatingTexts.length - 1; i >= 0; i--) { const ft = floatingTexts[i]; ft.y -= ft.vy * dt; if ((ft.alpha -= ft.decay * dt) <= 0) floatingTexts.splice(i, 1); }
@@ -2142,9 +2153,11 @@ function update(dt) {
     if (dailyAchSaveTimer <= 0) { saveDailyAch(); dailyAchSaveTimer = 1.5; }
   }
 
-  if (nearMissCooldown > 0) nearMissCooldown -= dt;
-  gameTime += dt;
-  stars.forEach(s => { s.y += (s.speed + (currentState === STATE_PLAYING ? (currentSpeed - 420) * 0.1 : 0)) * dt; if (s.y > screenHeight) { s.y = 0; s.x = Math.random() * screenWidth; } });
+  let slowMotionFactor = 1.0;
+
+  if (nearMissCooldown > 0) nearMissCooldown -= dt * slowMotionFactor;
+  gameTime += dt * slowMotionFactor;
+  stars.forEach(s => { s.y += (s.speed + (currentState === STATE_PLAYING ? (currentSpeed - 420) * 0.1 : 0)) * dt * slowMotionFactor; if (s.y > screenHeight) { s.y = 0; s.x = Math.random() * screenWidth; } });
 
   if (currentState !== STATE_PLAYING) {
     player.x = roadX + roadW / 2 + Math.sin(gameTime * 1.5) * 12;
@@ -2156,27 +2169,25 @@ function update(dt) {
     return;
   }
 
-  updateWeather(dt);
+  updateWeather(dt, slowMotionFactor);
   markWeather();
-  updateMusic(dt);
+  updateMusic(dt * slowMotionFactor);
   updateEngineSound();
-  if (playerFrozenTimer > 0) playerFrozenTimer = Math.max(0, playerFrozenTimer - dt);
+  if (playerFrozenTimer > 0) playerFrozenTimer = Math.max(0, playerFrozenTimer - dt * slowMotionFactor);
 
-  // no-hit tracking (damage = any HP loss)
   if (playerHP < runPrevHP) runHitTaken = true;
   runPrevHP = playerHP;
-  if (!runHitTaken) runNoHitTime += dt;
+  if (!runHitTaken) runNoHitTime += dt * slowMotionFactor;
 
-  if (nitroTimer > 0) { nitroTimer -= dt; if (nitroTimer <= 0) { nitroTimer = 0; nitroCooldown = 5; } }
-  else if (nitroCooldown > 0) nitroCooldown = Math.max(0, nitroCooldown - dt);
+  if (nitroTimer > 0) { nitroTimer -= dt * slowMotionFactor; if (nitroTimer <= 0) { nitroTimer = 0; nitroCooldown = 5; } }
+  else if (nitroCooldown > 0) nitroCooldown = Math.max(0, nitroCooldown - dt * slowMotionFactor);
 
-  // kill streak decay
   if (killStreakTimer > 0) {
-    killStreakTimer -= dt;
+    killStreakTimer -= dt * slowMotionFactor;
     if (killStreakTimer <= 0) { killStreakTimer = 0; killStreakCount = 0; }
   }
 
-  checkBossSpawn(); updateBoss(dt);
+  checkBossSpawn(); updateBoss(dt, slowMotionFactor);
   if (currentState !== STATE_PLAYING) return;
   checkSkinUnlocks(); updateMissionProgress();
   checkDailyProgress(missionEnemiesKilled, gameTime, score, coinsCollected, false);
@@ -2184,10 +2195,10 @@ function update(dt) {
   if (achCheckTimer <= 0) { achCheckTimer = 0.25; checkAchievements(); }
 
   if (screenDamageFlash > 0) screenDamageFlash = Math.max(0, screenDamageFlash - dt * 2.2);
-  if (rapidFireTimer > 0) rapidFireTimer = Math.max(0, rapidFireTimer - dt);
-  if (shieldTimer > 0) shieldTimer = Math.max(0, shieldTimer - dt);
+  if (rapidFireTimer > 0) rapidFireTimer = Math.max(0, rapidFireTimer - dt * slowMotionFactor);
+  if (shieldTimer > 0) shieldTimer = Math.max(0, shieldTimer - dt * slowMotionFactor);
 
-  playerShootTimer += dt;
+  playerShootTimer += dt * slowMotionFactor;
   const fireInterval = (rapidFireTimer > 0 ? 0.14 : 0.3) * (1 - (upgrades.fireRate || 0) * 0.05);
   if (playerShootTimer >= fireInterval) {
     playerShootTimer = 0;
@@ -2204,38 +2215,37 @@ function update(dt) {
   if (isSteeringLeft()) moveDir -= 1;
   if (isSteeringRight()) moveDir += 1;
   driftActive = moveDir !== 0;
-  if (driftActive) { driftStreak += dt; driftCombo = driftStreak >= 3; driftScore += (driftCombo ? 10 : 5) * dt; }
+  if (driftActive) { driftStreak += dt * slowMotionFactor; driftCombo = driftStreak >= 3; driftScore += (driftCombo ? 10 : 5) * dt * slowMotionFactor; }
   else { driftStreak = 0; driftCombo = false; }
 
   const laneCfg = getLaneCfg();
   let spd = Math.min((420 * getSpeedMult() * laneCfg.speedMult + distanceTraveled * 0.028) * (1.0 + (WEATHER_DEFS[currentWeather].speedBoost || 0)) * freezeFactor, 950 * laneCfg.speedMult);
   if (nitroTimer > 0) spd *= 1.5;
   currentSpeed = spd;
-  const roadTravel = currentSpeed * dt;
+  const roadTravel = currentSpeed * dt * slowMotionFactor;
   distanceTraveled += roadTravel;
   const dMult = laneCfg.scoreMult;
   if (gameMode === 'drift') score = Math.floor((Math.floor(driftScore) + coinsCollected * 5) * dMult);
-  else score = Math.floor((Math.floor((distanceTraveled / 30) * getWeatherScoreMultiplier()) + coinsCollected * 5) * (gameMode === 'elimination' ? 2 : 1) * dMult);
+  else {
+    const baseScore = Math.floor((distanceTraveled / 30) * getWeatherScoreMultiplier()) + coinsCollected * 5;
+    score = Math.floor((baseScore + bonusScore) * (gameMode === 'elimination' ? 2 : 1) * dMult);
+  }
   if (score > bestScore) bestScore = score;
   roadScrollOffset = (roadScrollOffset + roadTravel) % 60;
 
-  // road side scenery scrolls with the world (slightly slower = parallax)
-  updateRoadDecor(dt, currentSpeed * 0.8);
+  updateRoadDecor(dt * slowMotionFactor, currentSpeed * 0.8);
 
-  // per-run stat tracking (mode / lane bests, daily achievements)
   trackRunStats();
-
-  // milestone rewards use the raw (already multiplied) score
   checkMilestones();
 
   if (gameMode === 'timetrial' && gameTime >= TIME_TRIAL_DURATION) {
-    score += 250; gameOverReason = 'time';
+    bonusScore += 250; gameOverReason = 'time';
     floatingTexts.push({ text: "TIME'S UP! +250", x: screenWidth / 2, y: screenHeight * 0.4, vy: 40, alpha: 1, decay: 1.5, color: '#39ff14' });
     triggerGameOver(); return;
   }
 
   player.vx = moveDir * getSteerSpeed() * freezeFactor;
-  player.x += player.vx * dt;
+  player.x += player.vx * dt * slowMotionFactor;
   player.tilt += (moveDir * 0.14 - player.tilt) * Math.min(dt * 15, 1);
   const minX = roadX + player.width / 2 + 6, maxX = roadX + roadW - player.width / 2 - 6;
   if (player.x < minX) { player.x = minX; player.vx = 0; } else if (player.x > maxX) { player.x = maxX; player.vx = 0; }
@@ -2252,7 +2262,7 @@ function update(dt) {
     [-9, 0, 9].forEach(ox => particles.push({ x: player.x + ox, y: player.y + player.height / 2 + 4, vx: (Math.random() - 0.5) * 40, vy: 280 + Math.random() * 120, size: 3 + Math.random() * 3, color: Math.random() > 0.5 ? '#00ffff' : '#80f2ff', alpha: 0.9, decay: 3.2 }));
   }
 
-  for (let i = playerBullets.length - 1; i >= 0; i--) { const b = playerBullets[i]; b.y += b.vy * dt; if (b.y < -30) playerBullets.splice(i, 1); }
+  for (let i = playerBullets.length - 1; i >= 0; i--) { const b = playerBullets[i]; b.y += b.vy * dt * slowMotionFactor; if (b.y < -30) playerBullets.splice(i, 1); }
 
   // ENEMY BULLETS + NEAR MISS DETECTION
   for (let i = enemyBullets.length - 1; i >= 0; i--) {
@@ -2262,19 +2272,19 @@ function update(dt) {
       b.vx = Math.sign(dx) * Math.min(Math.abs(dx) * 2.2, 160);
       particles.push({ x: b.x, y: b.y - 6, vx: (Math.random() - 0.5) * 30, vy: -50, size: 2.5, color: '#b026ff', alpha: 0.8, decay: 4 });
     }
-    b.y += (b.vy || 500) * dt; if (b.vx) b.x += b.vx * dt;
+    b.y += (b.vy || 500) * dt * slowMotionFactor; if (b.vx) b.x += b.vx * dt * slowMotionFactor;
 
     if (gameMode !== 'drift' && !b.nearMissAwarded) {
       const bdx = Math.abs(b.x - player.x);
       const bdy = Math.abs(b.y - player.y);
-      if (bdx > 20 && bdx < 60 && bdy < 60) {
+      if (bdx > 18 && bdx < 65 && bdy < 60) {
         if (nearMissCooldown <= 0) {
           b.nearMissAwarded = true;
           nearMissCooldown = 0.3;
-          score += 5;
+          bonusScore += 5;
           dailyBump('nearMiss', 1);
-          soundCoin();
-          game.nearMissPopups.push({ text: 'NEAR MISS +5', x: player.x, y: player.y - 35, vy: 40, alpha: 1, decay: 1.0, color: '#00ffff' });
+          playTone(600, 'sine', 0.08, 0.06, 0.001, 900);
+          game.nearMissPopups.push({ text: '⚡ NEAR MISS +5', x: player.x, y: player.y - 35, vy: 40, alpha: 1, decay: 1.0, color: '#00ffff' });
         }
       }
     }
@@ -2293,7 +2303,10 @@ function update(dt) {
         if (isIce) { playerFrozenTimer = 1.0; soundFreeze(); floatingTexts.push({ text: '❄️ FROZEN! 50% SPEED', x: player.x, y: player.y - 45, vy: 40, alpha: 1, decay: 1.8, color: '#00e5ff' }); }
         else soundPlayerHit();
         for (let p = 0; p < 15; p++) particles.push({ x: b.x, y: b.y, vx: (Math.random() - 0.5) * 180, vy: (Math.random() - 0.5) * 180, size: 3, color: isIce ? '#00e5ff' : (isMissile ? '#b026ff' : '#ff0055'), alpha: 1, decay: 2.5 });
-        if (playerHP <= 0) { triggerGameOver(); return; }
+        if (playerHP <= 0) {
+          triggerGameOver();
+          return;
+        }
       }
       continue;
     }
@@ -2303,19 +2316,19 @@ function update(dt) {
   // UPDATE NEAR MISS POPUPS
   for (let i = game.nearMissPopups.length - 1; i >= 0; i--) {
     const p = game.nearMissPopups[i];
-    p.y -= p.vy * dt;
-    p.alpha -= p.decay * dt;
+    p.y -= p.vy * dt * slowMotionFactor;
+    p.alpha -= p.decay * dt * slowMotionFactor;
     if (p.alpha <= 0) game.nearMissPopups.splice(i, 1);
   }
 
   if (boss === null) {
-    if ((nextCarSpawnTimer -= dt) <= 0) { spawnTrafficCar(); nextCarSpawnTimer = (Math.max(1.0 - (currentSpeed - 420) * 0.0012, 0.45) + Math.random() * 0.4) * (gameMode === 'elimination' ? 0.7 : 1) * (1 / laneCfg.spawnRateMult); }
-    if ((nextCoinSpawnTimer -= dt) <= 0) {
+    if ((nextCarSpawnTimer -= dt * slowMotionFactor) <= 0) { spawnTrafficCar(); nextCarSpawnTimer = (Math.max(1.0 - (currentSpeed - 420) * 0.0012, 0.45) + Math.random() * 0.4) * (gameMode === 'elimination' ? 0.7 : 1) * (1 / laneCfg.spawnRateMult); }
+    if ((nextCoinSpawnTimer -= dt * slowMotionFactor) <= 0) {
       const cl = pickFreeLane(-40);
       if (cl < 0) { nextCoinSpawnTimer = 0.25; }
       else { coins.push({ x: roadX + cl * laneWidth + laneWidth / 2, y: -40, radius: 9, pulseOffset: Math.random() * 6 }); nextCoinSpawnTimer = 1.4 + Math.random() * 1.8; }
     }
-    if ((nextPowerupSpawnTimer -= dt) <= 0) {
+    if ((nextPowerupSpawnTimer -= dt * slowMotionFactor) <= 0) {
       const pl = pickFreeLane(-50);
       if (pl < 0) { nextPowerupSpawnTimer = 0.25; }
       else {
@@ -2327,14 +2340,14 @@ function update(dt) {
   }
 
   for (let i = powerups.length - 1; i >= 0; i--) {
-    const p = powerups[i]; p.y += currentSpeed * dt;
+    const p = powerups[i]; p.y += currentSpeed * dt * slowMotionFactor;
     if (Math.hypot(player.x - p.x, player.y - p.y) < player.width / 2 + p.radius) { applyPowerup(p.type); soundPowerup(); powerups.splice(i, 1); continue; }
     if (p.y > screenHeight + 60) powerups.splice(i, 1);
   }
 
   for (let i = trafficCars.length - 1; i >= 0; i--) {
-    const car = trafficCars[i]; car.y += (currentSpeed - car.speed) * dt;
-    if (car.isEnemy && (car.shootCooldown -= dt) <= 0 && car.y > 20 && car.y < screenHeight - 120) {
+    const car = trafficCars[i]; car.y += (currentSpeed - car.speed) * dt * slowMotionFactor;
+    if (car.isEnemy && (car.shootCooldown -= dt * slowMotionFactor) <= 0 && car.y > 20 && car.y < screenHeight - 120) {
       const elim = gameMode === 'elimination';
       car.shootCooldown = elim ? 0.75 : 1.5;
       enemyBullets.push({ x: car.x, y: car.y + car.height / 2 + 6, vy: elim ? 620 : 500, width: 5, height: 14 });
@@ -2348,10 +2361,10 @@ function update(dt) {
         if ((car.hp -= 1) <= 0) {
           destroyed = true; comboKills += 1; const mult = getComboMultiplier(); checkComboTierUp();
           registerKillStreak();
-          const pts = Math.round(10 * mult * laneCfg.scoreMult); score += pts; distanceTraveled += 300; missionEnemiesKilled += 1; lifetimeStats.totalEnemies += 1;
+          const pts = Math.round(10 * mult * laneCfg.scoreMult); bonusScore += pts; distanceTraveled += 300; missionEnemiesKilled += 1; lifetimeStats.totalEnemies += 1;
           dailyBump('enemies', 1);
           soundEnemyExplosion();
-          floatingTexts.push({ text: `+${pts}${mult > 1 ? (' x' + mult) : ''}`, x: car.x, y: car.y, vy: 55, alpha: 1, decay: 1.8, color: getComboColor(mult) });
+          floatingTexts.push({ text: '+' + pts + (mult > 1 ? (' x' + mult) : ''), x: car.x, y: car.y, vy: 55, alpha: 1, decay: 1.8, color: getComboColor(mult) });
           for (let p = 0; p < 20; p++) particles.push({ x: car.x, y: car.y, vx: (Math.random() - 0.5) * 200, vy: (Math.random() - 0.5) * 200, size: 3.5, color: car.colorPalette.glow, alpha: 1, decay: 1.8 });
           break;
         }
@@ -2366,27 +2379,28 @@ function update(dt) {
       } else {
         trafficCars.splice(i, 1);
         triggerScreenShake(8, 0.3);
-        triggerGameOver(); return;
+        triggerGameOver(); // Instant Out
+        return;
       }
     }
     if (car.y > screenHeight + 120) trafficCars.splice(i, 1);
   }
 
   for (let i = coins.length - 1; i >= 0; i--) {
-    const c = coins[i]; c.y += currentSpeed * dt;
+    const c = coins[i]; c.y += currentSpeed * dt * slowMotionFactor;
     if (Math.hypot(player.x - c.x, player.y - c.y) < player.width / 2 + c.radius) {
       const coinPts = diffScore(5);
-      coinsCollected += 1; totalCoins += 1; saveCoins(); score += coinPts; missionCoinsGathered += 1; lifetimeStats.totalCoins += 1;
+      coinsCollected += 1; totalCoins += 1; saveCoins(); missionCoinsGathered += 1; lifetimeStats.totalCoins += 1;
       dailyBump('coins', 1);
       soundCoin();
-      floatingTexts.push({ text: `+${coinPts} (🪙+1)`, x: c.x, y: c.y, vy: 60, alpha: 1, decay: 2, color: '#ffd700' });
+      floatingTexts.push({ text: '+' + coinPts + ' (🪙+1)', x: c.x, y: c.y, vy: 60, alpha: 1, decay: 2, color: '#ffd700' });
       for (let p = 0; p < 8; p++) particles.push({ x: c.x, y: c.y, vx: (Math.random() - 0.5) * 120, vy: (Math.random() - 0.5) * 120, size: 2.5, color: '#ffd700', alpha: 1, decay: 2 });
       coins.splice(i, 1); continue;
     }
     if (c.y > screenHeight + 40) coins.splice(i, 1);
   }
 
-  updateEffects(dt);
+  updateEffects(dt * slowMotionFactor);
 }
 
 // DRAWING
@@ -2395,14 +2409,12 @@ function drawBtn(x, y, w, h, col, bg, txt, sz) {
   ctx.shadowColor = col; ctx.shadowBlur = 12; ctx.fillStyle = bg; ctx.strokeStyle = col; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.roundRect(x - w / 2, y - h / 2, w, h, h / 2); ctx.fill(); ctx.stroke();
   ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  // auto-shrink long labels so they always fit inside the button
   let fs = sz || 14;
-  do { ctx.font = `bold ${fs}px sans-serif`; fs -= 0.5; } while (ctx.measureText(txt).width > w - 18 && fs > 8);
+  do { ctx.font = 'bold ' + fs + 'px sans-serif'; fs -= 0.5; } while (ctx.measureText(txt).width > w - 18 && fs > 8);
   ctx.fillText(txt, x, y);
   ctx.restore();
 }
 
-// centered word-wrapped text (returns number of lines drawn)
 function drawWrapped(text, cx, y, maxW, lh) {
   const words = text.split(' '), lines = [];
   let line = '';
@@ -2427,7 +2439,6 @@ function drawSectionHead(text, y, x, w, rightText, rightCol) {
   ctx.restore();
 }
 
-// --- SHARED HEADER FOR TABBED / LIST SCREENS (title centered, BACK centered below) ---
 function drawScreenHeader(title, subtitle, accent) {
   ctx.save();
   ctx.fillStyle = 'rgba(4, 6, 20, 0.98)';
@@ -2459,7 +2470,7 @@ function drawTabs(tabs, activeId, accent) {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = sel ? accent : '#8e9bbb';
     let fs = 13;
-    do { ctx.font = `bold ${fs}px sans-serif`; fs -= 0.5; } while (ctx.measureText(t.label).width > r.w - 12 && fs > 7.5);
+    do { ctx.font = 'bold ' + fs + 'px sans-serif'; fs -= 0.5; } while (ctx.measureText(t.label).width > r.w - 12 && fs > 7.5);
     ctx.fillText(t.label, r.x + r.w / 2, r.y + r.h / 2);
     if (sel) {
       ctx.fillStyle = accent;
@@ -2494,7 +2505,7 @@ function drawBackground() {
   grad.addColorStop(1, rd.bg[2]);
   ctx.fillStyle = grad; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40);
   stars.forEach(s => {
-    ctx.fillStyle = `rgba(${rd.star}, ${s.alpha * (0.7 + 0.3 * Math.sin(gameTime * s.pulseSpeed + s.pulseOffset))})`;
+    ctx.fillStyle = 'rgba(' + rd.star + ', ' + (s.alpha * (0.7 + 0.3 * Math.sin(gameTime * s.pulseSpeed + s.pulseOffset))) + ')';
     ctx.fillRect(s.x, s.y, s.radius, s.radius);
   });
 }
@@ -2530,19 +2541,19 @@ function drawWeatherOverlay() {
   ctx.save();
   if (currentWeather === 'rain' || prevWeather === 'rain') {
     const a = (currentWeather === 'rain' ? weatherTransition : (1 - weatherTransition)) * 0.65;
-    if (a > 0.01) { ctx.strokeStyle = `rgba(120, 200, 255, ${a})`; ctx.lineWidth = 1.5; rainDrops.forEach(r => { ctx.beginPath(); ctx.moveTo(r.x, r.y); ctx.lineTo(r.x - 4, r.y + r.l); ctx.stroke(); }); }
+    if (a > 0.01) { ctx.strokeStyle = 'rgba(120, 200, 255, ' + a + ')'; ctx.lineWidth = 1.5; rainDrops.forEach(r => { ctx.beginPath(); ctx.moveTo(r.x, r.y); ctx.lineTo(r.x - 4, r.y + r.l); ctx.stroke(); }); }
   }
   if (currentWeather === 'snow' || prevWeather === 'snow') {
     const a = (currentWeather === 'snow' ? weatherTransition : (1 - weatherTransition)) * 0.85;
-    if (a > 0.01) { ctx.fillStyle = `rgba(235, 248, 255, ${a})`; snowFlakes.forEach(s => { ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); }); }
+    if (a > 0.01) { ctx.fillStyle = 'rgba(235, 248, 255, ' + a + ')'; snowFlakes.forEach(s => { ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); }); }
   }
   if (currentWeather === 'fog' || prevWeather === 'fog') {
     const a = (currentWeather === 'fog' ? weatherTransition : (1 - weatherTransition)) * 0.3;
-    if (a > 0.01) { ctx.fillStyle = `rgba(170, 190, 210, ${a})`; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40); }
+    if (a > 0.01) { ctx.fillStyle = 'rgba(170, 190, 210, ' + a + ')'; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40); }
   }
   if (currentWeather === 'night' || prevWeather === 'night') {
     const a = (currentWeather === 'night' ? weatherTransition : (1 - weatherTransition)) * 0.38;
-    if (a > 0.01) { ctx.fillStyle = `rgba(3, 4, 15, ${a})`; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40); }
+    if (a > 0.01) { ctx.fillStyle = 'rgba(3, 4, 15, ' + a + ')'; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40); }
   }
   ctx.restore();
 }
@@ -2582,7 +2593,6 @@ function drawPlayerCar() {
   ctx.beginPath(); ctx.moveTo(-hw + 6, -hh); ctx.lineTo(-hw - 22, -hh - 160); ctx.lineTo(-hw + 30, -hh - 160); ctx.closePath(); ctx.fill();
   ctx.beginPath(); ctx.moveTo(hw - 6, -hh); ctx.lineTo(hw - 30, -hh - 160); ctx.lineTo(hw + 22, -hh - 160); ctx.closePath(); ctx.fill();
   if (skin.special) {
-    // Cosmic Nova: pulsing outer aura
     ctx.save();
     const auraCol = getRainbowColor(90);
     ctx.shadowColor = auraCol; ctx.shadowBlur = 40; ctx.strokeStyle = auraCol; ctx.lineWidth = 2;
@@ -2597,7 +2607,6 @@ function drawPlayerCar() {
   ctx.fillStyle = bg; ctx.strokeStyle = glow; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.roundRect(-hw, -hh, player.width, player.height, 8); ctx.fill(); ctx.stroke();
   if (skin.special) {
-    // Cosmic Nova: animated stars drifting across the body
     ctx.save();
     ctx.beginPath(); ctx.roundRect(-hw, -hh, player.width, player.height, 8); ctx.clip();
     ctx.shadowBlur = 0;
@@ -2633,7 +2642,7 @@ function drawBoss() {
   if (!boss) return;
   ctx.save();
   if (boss.telegraphTimer > 0) {
-    ctx.strokeStyle = `rgba(255, 230, 0, ${0.5 + 0.5 * Math.sin(gameTime * 24)})`; ctx.lineWidth = 3; ctx.setLineDash([12, 10]);
+    ctx.strokeStyle = 'rgba(255, 230, 0, ' + (0.5 + 0.5 * Math.sin(gameTime * 24)) + ')'; ctx.lineWidth = 3; ctx.setLineDash([12, 10]);
     ctx.beginPath(); ctx.moveTo(boss.telegraphX, 0); ctx.lineTo(boss.telegraphX, screenHeight); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = 'rgba(255, 230, 0, 0.12)'; ctx.fillRect(boss.telegraphX - 22, 0, 44, screenHeight);
     ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#ffe600'; ctx.textAlign = 'center'; ctx.fillText('⚠️ LIGHTNING INCOMING', boss.telegraphX, screenHeight * 0.4);
@@ -2725,7 +2734,6 @@ function drawMilestoneBar() {
   ctx.restore();
 }
 
-// Milestone popup: small, positioned low (above the player car) so it never covers boss fights
 function drawMilestonePopup() {
   if (!milestonePopup.active) return;
   const t = milestonePopup.timer, el = 2.5 - t, ut = performance.now() / 1000;
@@ -2733,7 +2741,7 @@ function drawMilestonePopup() {
   const a = t < 0.5 ? Math.max(0, t / 0.5) : 1;
   const w = Math.min(240, screenWidth - 20), h = 100;
   const x = screenWidth / 2 - w / 2, y = screenHeight * 0.72 - h / 2 + (1 - ease) * 60;
-  const rb = off => `hsl(${((ut * 120 + (off || 0)) % 360)}, 100%, 55%)`;
+  const rb = off => 'hsl(' + ((ut * 120 + (off || 0)) % 360) + ', 100%, 55%)';
   ctx.save();
   ctx.globalAlpha = a;
   ctx.shadowColor = rb(0); ctx.shadowBlur = 22;
@@ -2762,6 +2770,7 @@ function drawMilestonePopup() {
 function drawHUD() {
   ctx.save();
   if (screenDamageFlash > 0) { ctx.fillStyle = screenDamageFlashColor; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40); }
+
   for (let i = 0; i < getRunMaxHP(); i++) {
     ctx.font = '15px sans-serif'; ctx.fillText(i < playerHP ? '❤️' : '🖤', 18 + i * 22, 30);
   }
@@ -2779,9 +2788,9 @@ function drawHUD() {
   const md = getMode(), tLeft = Math.max(0, Math.ceil(TIME_TRIAL_DURATION - gameTime));
   ctx.font = 'bold 10.5px sans-serif'; ctx.textAlign = 'left';
   ctx.fillStyle = (gameMode === 'timetrial' && tLeft <= 5) ? '#ff0055' : md.color;
-  ctx.fillText(`${md.icon} ${md.name}${gameMode === 'timetrial' ? ' • ' + tLeft + 's' : ''}`, 18, 94);
+  ctx.fillText(md.icon + ' ' + md.name + (gameMode === 'timetrial' ? ' • ' + tLeft + 's' : ''), 18, 94);
   ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = cfg.color;
-  ctx.fillText(`🛣️ ${cfg.lanes} LANES • ${rdInfo.name.toUpperCase()}${cfg.scoreMult > 1 ? ' • x' + cfg.scoreMult : ''}`, 18, 110);
+  ctx.fillText('🛣️ ' + cfg.lanes + ' LANES • ' + rdInfo.name.toUpperCase() + (cfg.scoreMult > 1 ? ' • x' + cfg.scoreMult : ''), 18, 110);
   ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14; ctx.fillStyle = '#ffd700'; ctx.font = '900 20px sans-serif'; ctx.textAlign = 'right';
   ctx.fillText(bestScore.toString(), screenWidth - 18, 30);
   ctx.shadowBlur = 0; ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(255, 215, 0, 0.7)'; ctx.fillText('BEST', screenWidth - 18, 43);
@@ -2794,7 +2803,7 @@ function drawHUD() {
     const mw = Math.min(screenWidth * 0.44, 180);
     ctx.beginPath(); ctx.roundRect(screenWidth / 2 - mw / 2, 8, mw, 22, 6); ctx.fill(); ctx.stroke();
     ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#39ff14';
-    ctx.fillText(`${currentMission.label}: ${Math.min(missionProgress, currentMission.target)}/${currentMission.target}`, screenWidth / 2, 23);
+    ctx.fillText(currentMission.label + ': ' + Math.min(missionProgress, currentMission.target) + '/' + currentMission.target, screenWidth / 2, 23);
   }
   const wInfo = WEATHER_DEFS[currentWeather];
   ctx.textAlign = 'center';
@@ -2802,7 +2811,7 @@ function drawHUD() {
   ctx.fillStyle = 'rgba(8,14,28,0.85)'; ctx.strokeStyle = wInfo.color; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.roundRect(screenWidth / 2 - bw / 2, by, bw, bh, 9); ctx.fill(); ctx.stroke();
   ctx.font = 'bold 9.5px sans-serif'; ctx.fillStyle = wInfo.color; ctx.textBaseline = 'middle';
-  ctx.fillText(`${wInfo.icon} ${wInfo.name}${wInfo.mult > 1 ? (' x' + wInfo.mult) : ''}`, screenWidth / 2, by + bh / 2);
+  ctx.fillText(wInfo.icon + ' ' + wInfo.name + (wInfo.mult > 1 ? (' x' + wInfo.mult) : ''), screenWidth / 2, by + bh / 2);
   drawMilestoneBar();
   ctx.textBaseline = 'middle';
   if (comboKills >= 10) {
@@ -2818,7 +2827,7 @@ function drawHUD() {
       const barW = Math.min(screenWidth * 0.85, 340), barX = screenWidth / 2 - barW / 2, barY = 126;
       ctx.textAlign = 'center'; ctx.font = '900 13px sans-serif'; ctx.fillStyle = '#b026ff';
       ctx.shadowColor = '#b026ff'; ctx.shadowBlur = 12;
-      ctx.fillText(`👹 MEGA BOSS - HP: ${Math.max(boss.hp, 0)} / ${boss.maxHp}`, screenWidth / 2, barY - 4);
+      ctx.fillText('👹 MEGA BOSS - HP: ' + Math.max(boss.hp, 0) + ' / ' + boss.maxHp, screenWidth / 2, barY - 4);
       ctx.shadowBlur = 0;
       ctx.fillStyle = 'rgba(25, 5, 35, 0.9)'; ctx.strokeStyle = getRainbowColor(); ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.roundRect(barX, barY, barW, 14, 5); ctx.fill(); ctx.stroke();
@@ -2833,7 +2842,7 @@ function drawHUD() {
     } else {
       const barW = Math.min(screenWidth * 0.78, 300), barX = screenWidth / 2 - barW / 2, barY = 128;
       ctx.textAlign = 'center'; ctx.font = '900 12px sans-serif'; ctx.fillStyle = boss.color;
-      ctx.fillText(`${boss.emblem} ${boss.name} - HP: ${Math.max(boss.hp, 0)} / ${boss.maxHp}`, screenWidth / 2, barY - 4);
+      ctx.fillText(boss.emblem + ' ' + boss.name + ' - HP: ' + Math.max(boss.hp, 0) + ' / ' + boss.maxHp, screenWidth / 2, barY - 4);
       ctx.fillStyle = 'rgba(20, 0, 10, 0.85)'; ctx.strokeStyle = boss.color; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.roundRect(barX, barY, barW, 12, 4); ctx.fill(); ctx.stroke();
       ctx.fillStyle = boss.color; ctx.fillRect(barX + 2, barY + 2, Math.max(0, (boss.hp / boss.maxHp) * (barW - 4)), 8);
@@ -2867,28 +2876,22 @@ function drawTutorial() {
   ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 24; ctx.fillStyle = '#0a0e22'; ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.roundRect(L.cx0, L.cy0, L.cw, L.chh, 18); ctx.fill(); ctx.stroke();
   ctx.shadowBlur = 0; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  // skip button (top-right of card)
   if (!last) {
     drawBtn(L.cx0 + L.cw - 42, L.cy0 + 22, 64, 26, '#7a859f', '#10142a', 'SKIP', 11);
   }
-  // icon
   ctx.font = '48px sans-serif'; ctx.fillStyle = '#ffffff';
   ctx.fillText(st.icon, L.midX, L.cy0 + 66);
-  // title
   ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 12; ctx.fillStyle = '#00ffff';
   fitFont(st.title, L.cw - 36, 22, 'bold');
   ctx.fillText(st.title, L.midX, L.cy0 + 122);
   ctx.shadowBlur = 0;
-  // description lines
   ctx.fillStyle = '#ffffff';
   st.lines.forEach((ln, i) => {
     if (!ln) return;
     fitFont(ln, L.cw - 30, 14, '');
     ctx.fillText(ln, L.midX, L.cy0 + 160 + i * 24);
   });
-  // NEXT / START button
   drawBtn(L.midX, L.cy0 + L.chh - 62, 180, 44, '#00ffff', '#051829', last ? 'START RACING' : 'NEXT ▶', 16);
-  // progress dots
   const n = TUTORIAL_STEPS.length, gap = 18, sx = L.midX - ((n - 1) * gap) / 2;
   for (let i = 0; i < n; i++) {
     ctx.beginPath();
@@ -2911,28 +2914,23 @@ function drawMenu() {
   ctx.fillStyle = 'rgba(12,18,36,0.85)'; ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.roundRect(midX - sw / 2, sy, sw, 64, 10); ctx.fill(); ctx.stroke();
   ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#8e9bbb';
-  ctx.fillText(`ENEMIES: ${lifetimeStats.totalEnemies} • COINS: ${totalCoins} • BOSSES: ${lifetimeStats.bossesDefeated || 0}`, midX, sy + 18);
+  ctx.fillText('ENEMIES: ' + lifetimeStats.totalEnemies + ' • COINS: ' + totalCoins + ' • BOSSES: ' + (lifetimeStats.bossesDefeated || 0), midX, sy + 18);
   ctx.fillStyle = '#ffd700'; ctx.font = '900 14px sans-serif';
-  ctx.fillText(`BEST SCORE: ${lifetimeStats.bestScore || 0}`, midX, sy + 36);
+  ctx.fillText('BEST SCORE: ' + (lifetimeStats.bestScore || 0), midX, sy + 36);
   ctx.fillStyle = '#ffb347'; ctx.font = 'bold 11px sans-serif';
-  ctx.fillText(`🏆 MILESTONES: ${highestMilestoneEver}`, midX, sy + 53);
+  ctx.fillText('🏆 MILESTONES: ' + highestMilestoneEver, midX, sy + 53);
   const p = 1 + 0.04 * Math.sin(gameTime * 4.5);
   drawBtn(midX, midY - 50, 195 * p, 46 * p, '#ffffff', '#051829', 'TAP TO PLAY', 18);
-  // 5. GARAGE (skins + upgrades combined)
-  drawBtn(midX, midY - 4, menuBtnW(260), 36, '#ff66c4', '#20081d', `🚗 GARAGE (${unlockedSkinIds.length}/${SKINS.length} skins, ${upgradesMaxedCount()}/${UPGRADE_KEYS.length} upgrades)`, 12.5);
-  // 6. DAILY CHALLENGE card
+  drawBtn(midX, midY - 4, menuBtnW(260), 36, '#ff66c4', '#20081d', '🚗 GARAGE (' + unlockedSkinIds.length + '/' + SKINS.length + ' skins, ' + upgradesMaxedCount() + '/' + UPGRADE_KEYS.length + ' upgrades)', 12.5);
   const ch = getCurrentDailyChallenge(), cw = Math.min(screenWidth * 0.88, 330), cy = midY + 44;
   ctx.fillStyle = 'rgba(10,16,32,0.9)'; ctx.strokeStyle = dailyCompleted ? '#39ff14' : 'rgba(255,215,0,0.5)'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.roundRect(midX - cw / 2, cy - 20, cw, 42, 8); ctx.fill(); ctx.stroke();
   ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#ffd700'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.fillText('🎯 DAILY CHALLENGE', midX, cy - 6);
   ctx.font = '10.5px sans-serif'; ctx.fillStyle = dailyCompleted ? '#39ff14' : '#fff';
-  ctx.fillText(dailyCompleted ? '✅ COMPLETED (+500🪙)' : `${ch.text} (${Math.min(dailyProgress, ch.target)}/${ch.target})`, midX, cy + 12);
-  // 7. MODE (mode + lanes + road)
+  ctx.fillText(dailyCompleted ? '✅ COMPLETED (+500🪙)' : (ch.text + ' (' + Math.min(dailyProgress, ch.target) + '/' + ch.target + ')'), midX, cy + 12);
   const md = getMode(), cfg = getLaneCfg(), rd = getRoad();
-  drawBtn(midX, midY + 100, menuBtnW(240), 34, md.color, '#0a1020', `${md.icon} ${capName(md.name)} • ${cfg.lanes}L • ${rd.name}`, 13);
-  // 8. ACHIEVEMENTS
-  drawBtn(midX, midY + 142, menuBtnW(240), 34, '#00ffff', '#0a1d30', `🏆 ACHIEVEMENTS (${achUnlockedCount()}/${ACHIEVEMENTS.length})`, 13);
-  // 9. SETTINGS
+  drawBtn(midX, midY + 100, menuBtnW(240), 34, md.color, '#0a1020', md.icon + ' ' + capName(md.name) + ' • ' + cfg.lanes + 'L • ' + rd.name, 13);
+  drawBtn(midX, midY + 142, menuBtnW(240), 34, '#00ffff', '#0a1d30', '🏆 ACHIEVEMENTS (' + achUnlockedCount() + '/' + ACHIEVEMENTS.length + ')', 13);
   drawBtn(midX, midY + 184, menuBtnW(240), 34, '#b0b8d0', '#10142a', '⚙️ SETTINGS', 13);
   ctx.restore();
 }
@@ -2946,7 +2944,7 @@ function drawRewardPopup() {
   ctx.shadowBlur = 12; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffd700'; ctx.font = '900 24px sans-serif'; ctx.fillText('🎁 DAILY REWARD', midX, cy0 + 32);
   ctx.shadowBlur = 0; ctx.fillStyle = '#8e9bbb'; ctx.font = 'bold 12px sans-serif';
-  ctx.fillText(`LOGIN STREAK: DAY ${rewardDay} / 7`, midX, cy0 + 60);
+  ctx.fillText('LOGIN STREAK: DAY ' + rewardDay + ' / 7', midX, cy0 + 60);
   const gap = 5, bw2 = (cw - 28 - gap * 6) / 7;
   for (let i = 0; i < 7; i++) {
     const bx = cx0 + 14 + i * (bw2 + gap), by2 = cy0 + 80, d = i + 1, cur = d === rewardDay, done = d < rewardDay;
@@ -2967,14 +2965,13 @@ function drawRewardPopup() {
   ctx.beginPath(); ctx.roundRect(pbx, pby, pbw, 14, 7); ctx.fill(); ctx.stroke();
   ctx.fillStyle = '#ffd700'; ctx.beginPath(); ctx.roundRect(pbx + 2, pby + 2, Math.max(8, (pbw - 4) * (rewardDay / 7)), 10, 5); ctx.fill();
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#39ff14'; ctx.font = '900 20px sans-serif';
-  ctx.fillText(`TODAY: +${DAILY_REWARDS[rewardDay - 1]} 🪙`, midX, cy0 + 190);
+  ctx.fillText('TODAY: +' + DAILY_REWARDS[rewardDay - 1] + ' 🪙', midX, cy0 + 190);
   ctx.fillStyle = rewardDay === 7 ? '#ff66c4' : '#8e9bbb'; ctx.font = 'bold 11px sans-serif';
   ctx.fillText(rewardDay === 7 ? '+ FREE RANDOM SKIN UNLOCK!' : 'Come back tomorrow to keep your streak!', midX, cy0 + 214);
   drawBtn(midX, midY + 105, 190, 48, '#39ff14', '#0a2a10', 'CLAIM', 20);
   ctx.restore();
 }
 
-// one achievement card (permanent or daily). No dates are ever shown.
 function drawAchCard(x, y, w, name, desc, done, cur, target, accent, lockIcon, doneLabel) {
   const fmt = n => Math.floor(n).toLocaleString('en-US');
   ctx.save();
@@ -3017,7 +3014,6 @@ function drawAchievements() {
   const midX = screenWidth / 2, cardW = Math.min(screenWidth * 0.92, 400), cx = midX - cardW / 2, L = achLayout();
   ctx.save();
   ctx.beginPath(); ctx.rect(0, UPG_HEADER, screenWidth, screenHeight - UPG_HEADER); ctx.clip();
-  // Section 1: today's challenges
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
   ctx.font = '900 13px sans-serif'; ctx.fillStyle = '#ffe600';
   ctx.fillText("🎯 TODAY'S CHALLENGES", cx + 4, L.dailyHeadY + achScroll + 8);
@@ -3030,7 +3026,6 @@ function drawAchievements() {
     if (y + ACH_CARD_H < UPG_HEADER || y > screenHeight) return;
     drawAchCard(cx, y, cardW, def.name, def.desc, !!dailyAch.done[id], dailyAch.stats[def.stat] || 0, def.target, '#ffe600', '🎯', 'COMPLETE');
   });
-  // Section 2: permanent achievements
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
   ctx.font = '900 13px sans-serif'; ctx.fillStyle = '#ffd700';
   ctx.fillText('🏆 ACHIEVEMENTS', cx + 4, L.permHeadY + achScroll + 8);
@@ -3042,8 +3037,7 @@ function drawAchievements() {
     drawAchCard(cx, y, cardW, ach.name, ach.desc, !!unlockedAchievements[ach.id], ach.prog(), ach.target, '#00e5ff', '🔒', 'UNLOCKED');
   });
   ctx.restore();
-  // header
-  drawScreenHeader('🏆 ACHIEVEMENTS', `${achUnlockedCount()} / ${ACHIEVEMENTS.length} UNLOCKED`, '#ffd700');
+  drawScreenHeader('🏆 ACHIEVEMENTS', achUnlockedCount() + ' / ' + ACHIEVEMENTS.length + ' UNLOCKED', '#ffd700');
   drawScrollHint(STATE_ACHIEVEMENTS);
 }
 
@@ -3080,7 +3074,6 @@ function drawSettings() {
   ctx.restore();
 }
 
-// MODE SCREEN — TABBED (Game Mode / Lanes / Road Type)
 function drawModeSelect() {
   ctx.fillStyle = 'rgba(4, 6, 20, 0.94)'; ctx.fillRect(0, 0, screenWidth, screenHeight);
   const midX = screenWidth / 2, M = modeLayout();
@@ -3146,7 +3139,6 @@ function drawModeSelect() {
       ctx.fillText(rd.icon, r.x + r.w / 2, r.y + 20);
       ctx.fillStyle = sel ? rd.accent : '#ffffff'; ctx.font = 'bold 11px sans-serif';
       ctx.fillText(rd.name.toUpperCase() + (sel ? ' ★' : ''), r.x + r.w / 2, r.y + 41);
-      // neon edge preview strip
       const sg = ctx.createLinearGradient(r.x + 14, 0, r.x + r.w - 14, 0);
       sg.addColorStop(0, rd.left); sg.addColorStop(1, rd.right);
       ctx.fillStyle = sg;
@@ -3157,12 +3149,11 @@ function drawModeSelect() {
   ctx.restore();
 
   const md = getMode();
-  drawScreenHeader('🎮 MODE & TRACK', `${md.icon} ${capName(md.name)} • ${laneChoice}L • ${getRoad().name}`, md.color);
+  drawScreenHeader('🎮 MODE & TRACK', md.icon + ' ' + capName(md.name) + ' • ' + laneChoice + 'L • ' + getRoad().name, md.color);
   drawTabs(MODE_TABS, modeTab, '#00ffff');
   drawScrollHint(STATE_MODE);
 }
 
-// GARAGE — TABBED (Car Skins / Upgrades)
 function drawGarage() {
   ctx.fillStyle = 'rgba(4, 6, 20, 0.94)'; ctx.fillRect(0, 0, screenWidth, screenHeight);
   const midX = screenWidth / 2, G = garLayout();
@@ -3185,7 +3176,6 @@ function drawGarage() {
       ctx.beginPath(); ctx.roundRect(cardX, cardY, skinW, cardH, 12); ctx.fill(); ctx.stroke();
       ctx.shadowBlur = 0;
       if (skin.special) {
-        // twinkling stars inside the Cosmic Nova card
         ctx.save();
         ctx.beginPath(); ctx.roundRect(cardX, cardY, skinW, cardH, 12); ctx.clip();
         for (let i = 0; i < 18; i++) {
@@ -3200,8 +3190,8 @@ function drawGarage() {
       ctx.textAlign = 'left'; ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = un ? '#fff' : '#777';
       ctx.fillText(skin.name, cardX + 24, cardY + 28);
       ctx.font = '11.5px sans-serif'; ctx.fillStyle = un ? '#39ff14' : '#ff6688';
-      let status = un ? 'UNLOCKED' : `🔒 ${skin.reqDesc}`;
-      if (!un && skin.reqAch) status = `🔒 ${skin.reqDesc} (${achUnlockedCount()}/${ACHIEVEMENTS.length})`;
+      let status = un ? 'UNLOCKED' : ('🔒 ' + skin.reqDesc);
+      if (!un && skin.reqAch) status = '🔒 ' + skin.reqDesc + ' (' + achUnlockedCount() + '/' + ACHIEVEMENTS.length + ')';
       fitFont(status, skinW - 24 - 100, 11.5, '');
       ctx.fillText(status, cardX + 24, cardY + 54);
       ctx.textAlign = 'right'; ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = sel ? col : (un ? '#8e9bbb' : '#555');
@@ -3227,14 +3217,14 @@ function drawGarage() {
       fitFont(def.desc, upgW - 58 - 110, 10, '');
       ctx.fillText(def.desc, cardX + 58, cardY + 34);
       ctx.fillStyle = '#39ff14'; ctx.font = 'bold 10.5px sans-serif';
-      ctx.fillText(`Lv ${cur}/${def.max}`, cardX + 58, cardY + 50);
-      drawBtn(cardX + upgW - 58, cardY + cardH / 2, 92, 36, isMax ? '#778899' : (can ? '#39ff14' : '#ff7799'), isMax ? '#1a1f2e' : (can ? '#1f2b09' : '#22141a'), isMax ? 'MAXED' : `🪙 ${cost}`, 12);
+      ctx.fillText('Lv ' + cur + '/' + def.max, cardX + 58, cardY + 50);
+      drawBtn(cardX + upgW - 58, cardY + cardH / 2, 92, 36, isMax ? '#778899' : (can ? '#39ff14' : '#ff7799'), isMax ? '#1a1f2e' : (can ? '#1f2b09' : '#22141a'), isMax ? 'MAXED' : ('🪙 ' + cost), 12);
       ctx.restore();
     });
   }
   ctx.restore();
 
-  drawScreenHeader('🚗 GARAGE & UPGRADES', `🪙 ${totalCoins} • ${unlockedSkinIds.length}/${SKINS.length} Skins • ${upgradesMaxedCount()}/${UPGRADE_KEYS.length} Upgrades`, '#ff66c4');
+  drawScreenHeader('🚗 GARAGE & UPGRADES', '🪙 ' + totalCoins + ' • ' + unlockedSkinIds.length + '/' + SKINS.length + ' Skins • ' + upgradesMaxedCount() + '/' + UPGRADE_KEYS.length + ' Upgrades', '#ff66c4');
   drawTabs(GAR_TABS, garTab, '#ff66c4');
   drawScrollHint(STATE_GARAGE);
 }
@@ -3253,9 +3243,9 @@ function drawGameOver() {
   ctx.save(); ctx.fillStyle = 'rgba(10,2,12,0.84)'; ctx.fillRect(-20, -20, screenWidth + 40, screenHeight + 40);
   const midX = screenWidth / 2, midY = screenHeight / 2, timeUp = gameOverReason === 'time', md = getMode(), gcfg = getLaneCfg();
   ctx.textAlign = 'center'; ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = md.color;
-  ctx.fillText(`${md.icon} ${md.name} MODE`, midX, midY - 152);
+  ctx.fillText(md.icon + ' ' + md.name + ' MODE', midX, midY - 152);
   ctx.font = 'bold 10.5px sans-serif'; ctx.fillStyle = gcfg.color;
-  ctx.fillText(`🛣️ ${gcfg.lanes} LANES • ${getRoad().name.toUpperCase()}${gcfg.scoreMult > 1 ? ' • x' + gcfg.scoreMult : ''}`, midX, midY - 136);
+  ctx.fillText('🛣️ ' + gcfg.lanes + ' LANES • ' + getRoad().name.toUpperCase() + (gcfg.scoreMult > 1 ? ' • x' + gcfg.scoreMult : ''), midX, midY - 136);
   ctx.font = '900 48px sans-serif'; ctx.fillStyle = timeUp ? '#39ff14' : '#ff0055';
   ctx.fillText(timeUp ? "TIME'S UP!" : 'CRASHED!', midX, midY - 105);
   const cw = Math.min(screenWidth * 0.82, 310), cy = midY - 65;
@@ -3266,12 +3256,11 @@ function drawGameOver() {
   ctx.font = '12px sans-serif'; ctx.fillStyle = '#8e9bbb'; ctx.fillText('FINAL SCORE', midX, cy + 20);
   ctx.font = '900 32px sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(score.toString(), midX, cy + 52);
   ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = '#ffd700';
-  ctx.fillText(`BEST SCORE: ${lifetimeStats.bestScore || bestScore}`, midX, cy + 78);
+  ctx.fillText('BEST SCORE: ' + (lifetimeStats.bestScore || bestScore), midX, cy + 78);
   ctx.fillStyle = '#ffe600';
-  ctx.fillText(`RUN COINS: +${coinsCollected} • TOTAL: 🪙 ${totalCoins}`, midX, cy + 96);
+  ctx.fillText('RUN COINS: +' + coinsCollected + ' • TOTAL: 🪙 ' + totalCoins, midX, cy + 96);
   ctx.fillStyle = '#ffb347';
-  ctx.fillText(`🏆 MILESTONES: ${milestonesReached}`, midX, cy + 114);
-  // Note: gameOverHook is rendered via DOM element (#gameOverHook)
+  ctx.fillText('🏆 MILESTONES: ' + milestonesReached, midX, cy + 114);
   const rdy = performance.now() - gameOverTimestamp >= 400;
   drawBtn(midX, midY + 116, 190, 48, rdy ? '#ff007f' : '#666', rdy ? '#2a0a20' : '#1a1a24', 'RETRY', 19);
   drawBtn(midX, midY + 174, 190, 48, rdy ? '#00ffff' : '#666', rdy ? '#051829' : '#1a1a24', '🏠 MAIN MENU', 18);
