@@ -334,7 +334,7 @@ function checkMilestones() {
       coins.push({
         x: roadX + Math.floor(Math.random() * laneCount) * laneWidth + laneWidth / 2,
         y: -40 - i * 60,
-        radius: 13,
+        radius: 9,
         pulseOffset: Math.random() * 6
       });
     }
@@ -1632,8 +1632,8 @@ function applyLaneLayout() {
   roadX = (screenWidth - roadW) / 2;
   laneWidth = roadW / laneCount;
   
-  // 3. MAKE CAR SMALLER (was 0.44 and max 50)
-  player.width = Math.min(Math.max(laneWidth * 0.32, 28), 42);
+  // 3. PLAYER CAR SIZE
+  player.width = Math.min(Math.max(laneWidth * 0.42, 34), 52);
   player.width = Math.min(player.width, laneWidth * 0.7);
   player.height = player.width * 1.85;
 }
@@ -2313,14 +2313,14 @@ function update(dt) {
     if ((nextCoinSpawnTimer -= dt) <= 0) {
       const cl = pickFreeLane(-40);
       if (cl < 0) { nextCoinSpawnTimer = 0.25; }
-      else { coins.push({ x: roadX + cl * laneWidth + laneWidth / 2, y: -40, radius: 13, pulseOffset: Math.random() * 6 }); nextCoinSpawnTimer = 1.4 + Math.random() * 1.8; }
+      else { coins.push({ x: roadX + cl * laneWidth + laneWidth / 2, y: -40, radius: 9, pulseOffset: Math.random() * 6 }); nextCoinSpawnTimer = 1.4 + Math.random() * 1.8; }
     }
     if ((nextPowerupSpawnTimer -= dt) <= 0) {
       const pl = pickFreeLane(-50);
       if (pl < 0) { nextPowerupSpawnTimer = 0.25; }
       else {
         const ptypes = gameMode === 'elimination' ? ['shield', 'rapid'] : ['shield', 'rapid', 'health'];
-        powerups.push({ type: ptypes[Math.floor(Math.random() * ptypes.length)], x: roadX + pl * laneWidth + laneWidth / 2, y: -50, radius: 17, pulseOffset: Math.random() * 6 });
+        powerups.push({ type: ptypes[Math.floor(Math.random() * ptypes.length)], x: roadX + pl * laneWidth + laneWidth / 2, y: -50, radius: 12, pulseOffset: Math.random() * 6 });
         nextPowerupSpawnTimer = 10.0 + Math.random() * 6;
       }
     }
@@ -3303,7 +3303,7 @@ function gameLoop(now) {
   coins.forEach(c => {
     ctx.save(); ctx.translate(c.x, c.y);
     ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14; ctx.fillStyle = '#ffd700';
-    ctx.beginPath(); ctx.arc(0, 0, c.radius, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    ctx.beginPath(); ctx.arc(0, 0, c.radius + 3, 0, Math.PI * 2); ctx.fill(); ctx.restore();
   });
   powerups.forEach(p => {
     ctx.save(); ctx.translate(p.x, p.y);
