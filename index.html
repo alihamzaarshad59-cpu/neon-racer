@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -771,12 +772,20 @@ function drawRoadDecor() {
 // CURRENCY
 let totalCoins = 0;
 try { totalCoins = parseInt(localStorage.getItem('neon_racer_coins') || '0', 10) || 0; } catch (e) {}
-function saveCoins() { try { localStorage.setItem('neon_racer_coins', totalCoins.toString()); } catch (e) {} }
+let coinsDirty = false;
+let coinsSaveTimer = 0;
+let skinCheckTimer = 0;
+function saveCoins() { coinsDirty = true; }
+function flushCoins() {
+  if (!coinsDirty) return;
+  try { localStorage.setItem('neon_racer_coins', totalCoins.toString()); } catch (e) {}
+  coinsDirty = false;
+}
 
 const UPGRADE_DEFS = {
   speed: { id: 'speed', name: 'TOP SPEED', icon: '⚡', max: 5, costs: [100, 250, 500, 1000, 2000], desc: '+8% Base Speed per level' },
   fireRate: { id: 'fireRate', name: 'FIRE RATE', icon: '🔫', max: 5, costs: [100, 250, 500, 1000, 2000], desc: '-5% Fire Interval per level' },
-  hp: { id: 'hp', name: 'MAX HEALTH', icon: '❤️', max: 3, costs: [500, 1500, 3000], desc: '+1 Heart per level (Max 6)' },
+  hp: { id: 'hp', name: 'MAX HEALTH', icon: '❤️', max: 3, costs: [500, 1500, 3000], desc: '+1 Heart per level (Bullets only)' },
   shield: { id: 'shield', name: 'SHIELD DURATION', icon: '🛡️', max: 3, costs: [300, 800, 1500], desc: '+2 Sec duration per level' },
   engine: { id: 'engine', name: 'ENGINE', icon: '🏎️', max: 5, costs: [200, 500, 1000, 2000, 4000], desc: '+10% Top Speed per level' },
   tires: { id: 'tires', name: 'TIRES', icon: '🌀', max: 5, costs: [150, 400, 800, 1500, 3000], desc: '+5% Steering per level' },
@@ -1004,7 +1013,7 @@ function markWeather() {
 }
 
 // ACHIEVEMENTS (48 total)
-const TIMETRIAL_ACH_TARGET = 5000;
+const TIMETRIAL_ACH_TARGET = 1500;
 const A = (id, name, desc, target, prog) => ({ id: id, name: name, desc: desc, target: target, prog: prog });
 const pGames = () => lifetimeStats.totalGames || 0;
 const pBest = () => bestScore;
@@ -1184,6 +1193,10 @@ function dailyMax(stat, v) {
 }
 window.addEventListener('pagehide', () => { if (dailyAch.date) saveDailyAch(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && dailyAch.date) saveDailyAch(); });
+
+// FIX 3 — persistent coin save listeners
+window.addEventListener('pagehide', flushCoins);
+document.addEventListener('visibilitychange', function() { if (document.hidden) flushCoins(); });
 
 // DAILY CHALLENGE
 const DAILY_CHALLENGES = [
@@ -1710,6 +1723,7 @@ function isSteeringRight() {
 }
 
 function pauseGame() {
+  flushCoins();
   if (currentState === STATE_PLAYING) {
     currentState = STATE_PAUSED;
     resetSteering();
@@ -1727,6 +1741,7 @@ function resumeGame() {
   }
 }
 function returnToMainMenu() {
+  flushCoins();
   currentState = STATE_MENU; resetSteering();
   stopEngineSound();
   tutorialActive = false;
@@ -1965,6 +1980,7 @@ function handleActionInput(cx, cy) {
 }
 
 function startGame() {
+  flushCoins();
   initDailyChallenge(); initDailyAchievements(); currentState = STATE_PLAYING;
   applyLaneLayout();
   score = 0; bonusScore = 0; distanceTraveled = 0; coinsCollected = 0; gameTime = 0; gameOverReason = 'crash';
@@ -1976,6 +1992,7 @@ function startGame() {
   comboKills = 0; lastComboTier = 1;
   lastBossThreshold = 0; boss = null; totalBossesDefeated = 0;
   runHitTaken = false; runNoHitTime = 0; runPrevHP = playerHP; achCheckTimer = 0;
+  skinCheckTimer = 0;
 
   nextMilestone = 5000; milestonesReached = 0;
   milestonePopup = { score: 0, reward: 0, timer: 0, active: false };
@@ -2011,6 +2028,7 @@ function startGame() {
 }
 
 function triggerGameOver() {
+  flushCoins();
   const timeUp = gameOverReason === 'time';
   currentState = STATE_GAMEOVER; gameOverTimestamp = performance.now(); resetSteering();
   stopEngineSound();
@@ -2050,6 +2068,7 @@ function triggerGameOver() {
     gameOverHookSub = '👹 Boss had only ' + boss.hp + ' HP left!';
   }
 
+  checkSkinUnlocks();
   saveStats();
   try { localStorage.setItem('neon_racer_best', bestScore.toString()); } catch (e) {}
   checkSkinUnlocks();
@@ -2152,6 +2171,10 @@ function update(dt) {
     dailyAchSaveTimer -= dt;
     if (dailyAchSaveTimer <= 0) { saveDailyAch(); dailyAchSaveTimer = 1.5; }
   }
+  if (coinsDirty) {
+    coinsSaveTimer -= dt;
+    if (coinsSaveTimer <= 0) { flushCoins(); coinsSaveTimer = 2.0; }
+  }
 
   let slowMotionFactor = 1.0;
 
@@ -2189,7 +2212,9 @@ function update(dt) {
 
   checkBossSpawn(); updateBoss(dt, slowMotionFactor);
   if (currentState !== STATE_PLAYING) return;
-  checkSkinUnlocks(); updateMissionProgress();
+  skinCheckTimer -= dt;
+  if (skinCheckTimer <= 0) { checkSkinUnlocks(); skinCheckTimer = 1.5; }
+  updateMissionProgress();
   checkDailyProgress(missionEnemiesKilled, gameTime, score, coinsCollected, false);
   achCheckTimer -= dt;
   if (achCheckTimer <= 0) { achCheckTimer = 0.25; checkAchievements(); }
@@ -2239,7 +2264,7 @@ function update(dt) {
   checkMilestones();
 
   if (gameMode === 'timetrial' && gameTime >= TIME_TRIAL_DURATION) {
-    bonusScore += 250; gameOverReason = 'time';
+    score += 250; gameOverReason = 'time';
     floatingTexts.push({ text: "TIME'S UP! +250", x: screenWidth / 2, y: screenHeight * 0.4, vy: 40, alpha: 1, decay: 1.5, color: '#39ff14' });
     triggerGameOver(); return;
   }
@@ -3328,3 +3353,4 @@ requestAnimationFrame(t => { lastTime = t; gameLoop(t); });
 </script>
 </body>
 </html>
+```
