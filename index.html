@@ -796,10 +796,11 @@ const UPGRADE_DEFS = {
   shield: { id: 'shield', name: 'SHIELD DURATION', icon: '🛡️', max: 3, costs: [300, 800, 1500], desc: '+2 Sec duration per level' },
   engine: { id: 'engine', name: 'ENGINE', icon: '🏎️', max: 5, costs: [200, 500, 1000, 2000, 4000], desc: '+10% Top Speed per level' },
   tires: { id: 'tires', name: 'TIRES', icon: '🌀', max: 5, costs: [150, 400, 800, 1500, 3000], desc: '+5% Steering per level' },
-  nitrous: { id: 'nitrous', name: 'NITROUS', icon: '🔥', max: 3, costs: [500, 1500, 3000], desc: '+2s Nitro Boost per level' }
+  nitrous: { id: 'nitrous', name: 'NITROUS', icon: '🔥', max: 3, costs: [500, 1500, 3000], desc: '+2s Nitro Boost per level' },
+  multiShot: { id: 'multiShot', name: 'MULTI-SHOT', icon: '🔱', max: 3, costs: [1000, 2500, 5000], desc: '+1 Bullet per level (Max 5)' }
 };
-const UPGRADE_KEYS = ['speed', 'fireRate', 'hp', 'shield', 'engine', 'tires', 'nitrous'];
-let upgrades = { speed: 0, fireRate: 0, hp: 0, shield: 0, engine: 0, tires: 0, nitrous: 0 };
+const UPGRADE_KEYS = ['speed', 'fireRate', 'hp', 'shield', 'engine', 'tires', 'nitrous', 'multiShot'];
+let upgrades = { speed: 0, fireRate: 0, hp: 0, shield: 0, engine: 0, tires: 0, nitrous: 0, multiShot: 0 };
 try { const su = localStorage.getItem('neon_racer_upgrades'); if (su) upgrades = Object.assign(upgrades, JSON.parse(su)); } catch (e) {}
 function saveUpgrades() { try { localStorage.setItem('neon_racer_upgrades', JSON.stringify(upgrades)); } catch (e) {} }
 function upgradesMaxedCount() { return UPGRADE_KEYS.filter(k => (upgrades[k] || 0) >= UPGRADE_DEFS[k].max).length; }
@@ -1921,22 +1922,25 @@ function handleActionInput(cx, cy) {
   }
   if (currentState === STATE_MENU) {
     const my = midY + menuShift();
-    if (cx >= screenWidth - 62 && cy <= 62) { toggleSound(); return; }
+    if (cx >= screenWidth - 62 && cy <= 62) { toggleSound(); return; } // TOP RIGHT SOUND
+    if (cx >= 16 && cx <= 64 && cy >= 16 && cy <= 64) { currentState = STATE_SETTINGS; soundPowerup(); return; } // TOP LEFT SETTINGS
+    
     if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (my - 50)) <= 24) { startGame(); return; }
     if (Math.abs(cx - midX) <= menuBtnW(260) / 2 && Math.abs(cy - (my - 4)) <= 20) { currentState = STATE_GARAGE; garScroll = 0; soundPowerup(); return; }
     if (Math.abs(cx - midX) <= menuBtnW(240) / 2 && Math.abs(cy - (my + 100)) <= 17) { currentState = STATE_MODE; modScroll = 0; soundPowerup(); return; }
     if (Math.abs(cx - midX) <= menuBtnW(240) / 2 && Math.abs(cy - (my + 142)) <= 17) { initDailyAchievements(); currentState = STATE_ACHIEVEMENTS; achScroll = 0; soundPowerup(); return; }
-    if (Math.abs(cx - midX) <= menuBtnW(240) / 2 && Math.abs(cy - (my + 184)) <= 17) { currentState = STATE_SETTINGS; soundPowerup(); return; }
   } else if (currentState === STATE_SETTINGS) {
     if (cx >= 16 && cx <= 110 && cy >= 20 && cy <= 68) { currentState = STATE_MENU; soundCoin(); return; }
+    
     const sensKeys = ['slow', 'normal', 'fast'];
     sensKeys.forEach((k, i) => {
       const bx = midX + (i - 1) * 100;
-      if (Math.abs(cx - bx) <= 46 && Math.abs(cy - 220) <= 19) { // FIXED: 160 -> 220
+      if (Math.abs(cx - bx) <= 46 && Math.abs(cy - 160) <= 19) { 
         sensitivity = k; try { localStorage.setItem('neon_racer_sensitivity', k); } catch (e) {} soundCoin();
       }
     });
-    [[332, 'music'], [442, 'sfx']].forEach(row => { // FIXED: 272 -> 332, 382 -> 442
+    
+    [[265, 'music'], [375, 'sfx']].forEach(row => { 
       const ry = row[0];
       if (Math.abs(cy - ry) <= 22) {
         let d = 0;
@@ -1947,12 +1951,12 @@ function handleActionInput(cx, cy) {
         }
       }
     });
-    // GYRO TOGGLE
-    if (Math.abs(cx - midX) <= 120 && Math.abs(cy - 448) <= 22) {
+    
+    if (Math.abs(cx - midX) <= 120 && Math.abs(cy - 450) <= 22) {
       toggleGyro();
       return;
     }
-    if (Math.abs(cx - midX) <= 105 && Math.abs(cy - 510) <= 19) { // FIXED: 500 -> 510
+    if (Math.abs(cx - midX) <= 105 && Math.abs(cy - 530) <= 19) { 
       tutorialDone = false;
       try { localStorage.removeItem('neon_racer_tutorial_done'); } catch (e) {}
       soundCoin();
@@ -2296,15 +2300,34 @@ function update(dt) {
     playerShootTimer = 0;
     if (gameMode !== 'drift') {
       const sk = getSelectedSkin(), bCol = sk.glow === 'rainbow' ? getRainbowColor() : sk.glow;
-      playerBullets.push({ x: player.x - 10, y: player.y - player.height / 2 + 2, vy: -820, width: 5, height: 16, color: bCol });
-      playerBullets.push({ x: player.x + 10, y: player.y - player.height / 2 + 2, vy: -820, width: 5, height: 16, color: bCol });
+      const mLevel = upgrades.multiShot || 0;
+      const bSpd = -820;
+      
+      if (mLevel === 0) {
+        playerBullets.push({ x: player.x - 10, y: player.y - player.height / 2 + 2, vx: 0, vy: bSpd, width: 5, height: 16, color: bCol });
+        playerBullets.push({ x: player.x + 10, y: player.y - player.height / 2 + 2, vx: 0, vy: bSpd, width: 5, height: 16, color: bCol });
+      } else if (mLevel === 1) {
+        playerBullets.push({ x: player.x, y: player.y - player.height / 2 + 2, vx: 0, vy: bSpd, width: 5, height: 16, color: bCol });
+        playerBullets.push({ x: player.x - 14, y: player.y - player.height / 2 + 2, vx: -150, vy: bSpd, width: 5, height: 16, color: bCol });
+        playerBullets.push({ x: player.x + 14, y: player.y - player.height / 2 + 2, vx: 150, vy: bSpd, width: 5, height: 16, color: bCol });
+      } else if (mLevel === 2) {
+        playerBullets.push({ x: player.x - 6, y: player.y - player.height / 2 + 2, vx: -100, vy: bSpd, width: 5, height: 16, color: bCol });
+        playerBullets.push({ x: player.x + 6, y: player.y - player.height / 2 + 2, vx: 100, vy: bSpd, width: 5, height: 16, color: bCol });
+        playerBullets.push({ x: player.x - 18, y: player.y - player.height / 2 + 2, vx: -250, vy: bSpd, width: 5, height: 16, color: bCol });
+        playerBullets.push({ x: player.x + 18, y: player.y - player.height / 2 + 2, vx: 250, vy: bSpd, width: 5, height: 16, color: bCol });
+      } else {
+        playerBullets.push({ x: player.x, y: player.y - player.height / 2 + 2, vx: 0, vy: bSpd, width: 5, height: 16, color: bCol });
+        playerBullets.push({ x: player.x - 12, y: player.y - player.height / 2 + 2, vx: -150, vy: bSpd, width: 5, height: 16, color: bCol });
+        playerBullets.push({ x: player.x + 12, y: player.y - player.height / 2 + 2, vx: 150, vy: bSpd, width: 5, height: 16, color: bCol });
+        playerBullets.push({ x: player.x - 24, y: player.y - player.height / 2 + 2, vx: -300, vy: bSpd, width: 5, height: 16, color: bCol });
+        playerBullets.push({ x: player.x + 24, y: player.y - player.height / 2 + 2, vx: 300, vy: bSpd, width: 5, height: 16, color: bCol });
+      }
       soundPlayerShoot();
     }
   }
 
   const freezeFactor = playerFrozenTimer > 0 ? 0.5 : 1.0;
   let moveDir = 0;
-  // ---- GYRO (TILT) STEERING - continuous input from device orientation ----
   if (gyroEnabled && gyroBaseGamma !== null) {
     const tilt = gyroCurrentGamma - gyroBaseGamma;
     const mag = Math.abs(tilt);
@@ -2312,7 +2335,7 @@ function update(dt) {
       moveDir = Math.sign(tilt) * Math.min(1, (mag - GYRO_DEADZONE_DEG) / GYRO_MAX_TILT_DEG);
     }
   }
-  // ---- Touch / keyboard override (binary) ----
+  
   if (isSteeringLeft()) moveDir = -1;
   if (isSteeringRight()) moveDir = 1;
   
@@ -2365,7 +2388,12 @@ function update(dt) {
     [-9, 0, 9].forEach(ox => particles.push({ x: player.x + ox, y: player.y + player.height / 2 + 4, vx: (Math.random() - 0.5) * 40, vy: 280 + Math.random() * 120, size: 3 + Math.random() * 3, color: Math.random() > 0.5 ? '#00ffff' : '#80f2ff', alpha: 0.9, decay: 3.2 }));
   }
 
-  for (let i = playerBullets.length - 1; i >= 0; i--) { const b = playerBullets[i]; b.y += b.vy * dt * slowMotionFactor; if (b.y < -30) playerBullets.splice(i, 1); }
+  for (let i = playerBullets.length - 1; i >= 0; i--) { 
+    const b = playerBullets[i]; 
+    b.y += b.vy * dt * slowMotionFactor; 
+    if (b.vx) b.x += b.vx * dt * slowMotionFactor; 
+    if (b.y < -30 || b.x < -30 || b.x > screenWidth + 30) playerBullets.splice(i, 1); 
+  }
 
   // ENEMY BULLETS + NEAR MISS DETECTION
   for (let i = enemyBullets.length - 1; i >= 0; i--) {
@@ -3009,7 +3037,13 @@ function drawTutorial() {
 function drawMenu() {
   ctx.save();
   const midX = screenWidth / 2, midY = screenHeight / 2 + menuShift();
+  
+  // TOP LEFT: SETTINGS ICON
+  drawBtn(40, 40, 44, 44, '#b0b8d0', 'rgba(5,24,41,0.85)', '⚙️', 18);
+  
+  // TOP RIGHT: SOUND ICON
   drawBtn(screenWidth - 40, 40, 44, 44, soundEnabled ? '#00ffff' : '#555', 'rgba(5,24,41,0.85)', soundEnabled ? '🔊' : '🔇', 18);
+  
   ctx.textAlign = 'center'; ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 30; ctx.fillStyle = '#00ffff';
   ctx.font = '900 40px sans-serif'; ctx.fillText('NEON RACER', midX, midY - 180);
   ctx.shadowColor = '#ff007f'; ctx.shadowBlur = 10; ctx.fillStyle = '#ff007f'; ctx.font = 'bold 12px sans-serif';
@@ -3035,7 +3069,8 @@ function drawMenu() {
   const md = getMode(), cfg = getLaneCfg(), rd = getRoad();
   drawBtn(midX, midY + 100, menuBtnW(240), 34, md.color, '#0a1020', md.icon + ' ' + capName(md.name) + ' • ' + cfg.lanes + 'L • ' + rd.name, 13);
   drawBtn(midX, midY + 142, menuBtnW(240), 34, '#00ffff', '#0a1d30', '🏆 ACHIEVEMENTS (' + achUnlockedCount() + '/' + ACHIEVEMENTS.length + ')', 13);
-  drawBtn(midX, midY + 184, menuBtnW(240), 34, '#b0b8d0', '#10142a', '⚙️ SETTINGS', 13);
+  
+  // SETTINGS BUTTON REMOVED FROM HERE
   ctx.restore();
 }
 
@@ -3154,13 +3189,13 @@ function drawSettings() {
   ctx.font = '900 22px sans-serif'; ctx.fillText('⚙️ SETTINGS', midX + 20, 43);
   ctx.shadowBlur = 0; ctx.fillStyle = '#00ffff'; ctx.font = 'bold 13px sans-serif';
   
-  // SHIFTED DOWN FOR GYRO UI
-  ctx.fillText('STEERING SENSITIVITY', midX, 182);
+  // STEERING SENSITIVITY
+  ctx.fillText('STEERING SENSITIVITY', midX, 120);
   [['slow', 'SLOW'], ['normal', 'NORMAL'], ['fast', 'FAST']].forEach((s, i) => {
     const sel = sensitivity === s[0], bx = midX + (i - 1) * 100;
-    drawBtn(bx, 220, 92, 38, sel ? '#00ffff' : '#4a5570', sel ? '#0a3a4a' : '#0a0d1e', s[1], 13);
+    drawBtn(bx, 160, 92, 38, sel ? '#00ffff' : '#4a5570', sel ? '#0a3a4a' : '#0a0d1e', s[1], 13);
     ctx.fillStyle = sel ? '#8afcff' : '#667'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(STEER_SPEEDS[s[0]] + '', bx, 250);
+    ctx.fillText(STEER_SPEEDS[s[0]] + '', bx, 190);
   });
   
   const volRow = (label, y, pct, col) => {
@@ -3173,18 +3208,20 @@ function drawSettings() {
     ctx.fillStyle = col; ctx.beginPath(); ctx.roundRect(midX - 40, y + 12, Math.max(0, 80 * pct / 100), 6, 3); ctx.fill();
     ctx.restore();
   };
-  volRow('🎵 MUSIC VOLUME', 332, musicVolPct, '#ff66c4');
-  volRow('🔊 SFX VOLUME', 442, sfxVolPct, '#39ff14');
+  
+  // VOLUMES (Adjusted Y positions)
+  volRow('🎵 MUSIC VOLUME', 265, musicVolPct, '#ff66c4');
+  volRow('🔊 SFX VOLUME', 375, sfxVolPct, '#39ff14');
 
-  // ---- GYRO (TILT) STEERING TOGGLE ----
+  // GYRO (TILT) STEERING TOGGLE
   const gyroCol = gyroEnabled ? '#39ff14' : '#4a5570';
   const gyroBg  = gyroEnabled ? '#0f2a10' : '#0a0d1e';
-  drawBtn(midX, 448, 240, 38, gyroCol, gyroBg, '📱 TILT STEERING: ' + (gyroEnabled ? 'ON' : 'OFF'), 13);
+  drawBtn(midX, 450, 240, 38, gyroCol, gyroBg, '📱 TILT STEERING: ' + (gyroEnabled ? 'ON' : 'OFF'), 13);
   ctx.fillStyle = gyroEnabled ? '#8aff75' : '#667';
   ctx.font = '9.5px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(gyroEnabled ? 'Hold still to calibrate • Tilt to steer' : 'Tap to enable tilt (gyro) steering', midX, 476);
+  ctx.fillText(gyroEnabled ? 'Hold still to calibrate • Tilt to steer' : 'Tap to enable tilt (gyro) steering', midX, 478);
 
-  drawBtn(midX, 510, 210, 38, '#00ffff', '#0a1d30', '📖 REPLAY TUTORIAL', 13);
+  drawBtn(midX, 530, 210, 38, '#00ffff', '#0a1d30', '📖 REPLAY TUTORIAL', 13);
   ctx.restore();
 }
 
