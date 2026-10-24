@@ -797,7 +797,7 @@ const UPGRADE_DEFS = {
   engine: { id: 'engine', name: 'ENGINE', icon: '🏎️', max: 5, costs: [200, 500, 1000, 2000, 4000], desc: '+10% Top Speed per level' },
   tires: { id: 'tires', name: 'TIRES', icon: '🌀', max: 5, costs: [150, 400, 800, 1500, 3000], desc: '+5% Steering per level' },
   nitrous: { id: 'nitrous', name: 'NITROUS', icon: '🔥', max: 3, costs: [500, 1500, 3000], desc: '+2s Nitro Boost per level' },
-  multiShot: { id: 'multiShot', name: 'MULTI-SHOT', icon: '🔱', max: 3, costs: [1000, 2500, 5000], desc: '+1 Bullet per level (Max 5)' }
+  multiShot: { id: 'multiShot', name: 'MULTI-SHOT', icon: '🔱', max: 3, costs: [1000, 2500, 5000], desc: '+1 Base Bullet per level (Max 6)' }
 };
 const UPGRADE_KEYS = ['speed', 'fireRate', 'hp', 'shield', 'engine', 'tires', 'nitrous', 'multiShot'];
 let upgrades = { speed: 0, fireRate: 0, hp: 0, shield: 0, engine: 0, tires: 0, nitrous: 0, multiShot: 0 };
@@ -921,6 +921,15 @@ function getComboColor(tier) {
   if (tier >= 3) return '#ff7700';
   if (tier >= 2) return '#ffd700';
   return '#00ffff';
+}
+// NAYA FUNCTION: Dynamic Bullet Count (Combo Overdrive)
+function getActiveBulletCount() {
+  let base = 2 + (upgrades.multiShot || 0);
+  let bonus = 0;
+  if (comboKills >= 20) bonus = 3;
+  else if (comboKills >= 10) bonus = 2;
+  else if (comboKills >= 5) bonus = 1;
+  return Math.min(6, base + bonus);
 }
 function checkComboTierUp() {
   const mult = getComboMultiplier();
@@ -1922,8 +1931,8 @@ function handleActionInput(cx, cy) {
   }
   if (currentState === STATE_MENU) {
     const my = midY + menuShift();
-    if (cx >= screenWidth - 62 && cy <= 62) { toggleSound(); return; } // TOP RIGHT SOUND
-    if (cx >= 16 && cx <= 64 && cy >= 16 && cy <= 64) { currentState = STATE_SETTINGS; soundPowerup(); return; } // TOP LEFT SETTINGS
+    if (cx >= screenWidth - 62 && cy <= 62) { toggleSound(); return; } // RIGHT SOUND
+    if (cx >= 16 && cx <= 64 && cy >= 16 && cy <= 64) { currentState = STATE_SETTINGS; soundPowerup(); return; } // LEFT SETTINGS
     
     if (Math.abs(cx - midX) <= 105 && Math.abs(cy - (my - 50)) <= 24) { startGame(); return; }
     if (Math.abs(cx - midX) <= menuBtnW(260) / 2 && Math.abs(cy - (my - 4)) <= 20) { currentState = STATE_GARAGE; garScroll = 0; soundPowerup(); return; }
@@ -2296,31 +2305,28 @@ function update(dt) {
 
   playerShootTimer += dt * slowMotionFactor;
   const fireInterval = (rapidFireTimer > 0 ? 0.14 : 0.3) * (1 - (upgrades.fireRate || 0) * 0.05);
+  
   if (playerShootTimer >= fireInterval) {
     playerShootTimer = 0;
     if (gameMode !== 'drift') {
       const sk = getSelectedSkin(), bCol = sk.glow === 'rainbow' ? getRainbowColor() : sk.glow;
-      const mLevel = upgrades.multiShot || 0;
       const bSpd = -820;
       
-      if (mLevel === 0) {
-        playerBullets.push({ x: player.x - 10, y: player.y - player.height / 2 + 2, vx: 0, vy: bSpd, width: 5, height: 16, color: bCol });
-        playerBullets.push({ x: player.x + 10, y: player.y - player.height / 2 + 2, vx: 0, vy: bSpd, width: 5, height: 16, color: bCol });
-      } else if (mLevel === 1) {
-        playerBullets.push({ x: player.x, y: player.y - player.height / 2 + 2, vx: 0, vy: bSpd, width: 5, height: 16, color: bCol });
-        playerBullets.push({ x: player.x - 14, y: player.y - player.height / 2 + 2, vx: -150, vy: bSpd, width: 5, height: 16, color: bCol });
-        playerBullets.push({ x: player.x + 14, y: player.y - player.height / 2 + 2, vx: 150, vy: bSpd, width: 5, height: 16, color: bCol });
-      } else if (mLevel === 2) {
-        playerBullets.push({ x: player.x - 6, y: player.y - player.height / 2 + 2, vx: -100, vy: bSpd, width: 5, height: 16, color: bCol });
-        playerBullets.push({ x: player.x + 6, y: player.y - player.height / 2 + 2, vx: 100, vy: bSpd, width: 5, height: 16, color: bCol });
-        playerBullets.push({ x: player.x - 18, y: player.y - player.height / 2 + 2, vx: -250, vy: bSpd, width: 5, height: 16, color: bCol });
-        playerBullets.push({ x: player.x + 18, y: player.y - player.height / 2 + 2, vx: 250, vy: bSpd, width: 5, height: 16, color: bCol });
-      } else {
-        playerBullets.push({ x: player.x, y: player.y - player.height / 2 + 2, vx: 0, vy: bSpd, width: 5, height: 16, color: bCol });
-        playerBullets.push({ x: player.x - 12, y: player.y - player.height / 2 + 2, vx: -150, vy: bSpd, width: 5, height: 16, color: bCol });
-        playerBullets.push({ x: player.x + 12, y: player.y - player.height / 2 + 2, vx: 150, vy: bSpd, width: 5, height: 16, color: bCol });
-        playerBullets.push({ x: player.x - 24, y: player.y - player.height / 2 + 2, vx: -300, vy: bSpd, width: 5, height: 16, color: bCol });
-        playerBullets.push({ x: player.x + 24, y: player.y - player.height / 2 + 2, vx: 300, vy: bSpd, width: 5, height: 16, color: bCol });
+      const count = getActiveBulletCount();
+      const spacing = count > 3 ? 10 : 12;
+      const vxSpacing = count > 2 ? 120 : 0;
+
+      for (let i = 0; i < count; i++) {
+        const offsetMultiplier = i - (count - 1) / 2;
+        playerBullets.push({
+          x: player.x + offsetMultiplier * spacing,
+          y: player.y - player.height / 2 + 2,
+          vx: offsetMultiplier * vxSpacing,
+          vy: bSpd,
+          width: 5,
+          height: 16,
+          color: bCol
+        });
       }
       soundPlayerShoot();
     }
@@ -3209,7 +3215,6 @@ function drawSettings() {
     ctx.restore();
   };
   
-  // VOLUMES (Adjusted Y positions)
   volRow('🎵 MUSIC VOLUME', 265, musicVolPct, '#ff66c4');
   volRow('🔊 SFX VOLUME', 375, sfxVolPct, '#39ff14');
 
