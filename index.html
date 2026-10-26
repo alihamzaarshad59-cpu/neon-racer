@@ -92,7 +92,7 @@ function playTone(freq, type, dur, gStart, gEnd, endFreq) {
 
 // ENGINE HUM SOUND
 let engineOsc = null, engineOsc2 = null, engineFilter = null, engineGain = null, engineGain2 = null, engineRunning = false;
-const MAX_ENGINE_SPEED = 950;
+const MAX_ENGINE_SPEED = 800;
 function startEngineSound() {
   if (!soundEnabled || !audioCtx || sfxVol() <= 0 || engineRunning) return;
   try {
@@ -235,7 +235,7 @@ const STATE_MENU = 0, STATE_PLAYING = 1, STATE_GAMEOVER = 2, STATE_GARAGE = 3, S
 let currentState = STATE_MENU, gameOverTimestamp = 0, gameOverReason = 'crash';
 const canvas = document.getElementById('gameCanvas'), ctx = canvas.getContext('2d');
 let screenWidth = 0, screenHeight = 0, dpr = 1, roadX = 0, roadW = 0, laneWidth = 0, roadScrollOffset = 0;
-let currentSpeed = 420, distanceTraveled = 0, score = 0, bonusScore = 0, bestScore = 0, bestScoreBeforeRun = 0, coinsCollected = 0, gameTime = 0;
+let currentSpeed = 300, distanceTraveled = 0, score = 0, bonusScore = 0, bestScore = 0, bestScoreBeforeRun = 0, coinsCollected = 0, gameTime = 0;
 
 // TOAST
 let toastText = '', toastColor = '#39ff14', toastTimer = 0;
@@ -2064,7 +2064,7 @@ function startGame() {
   score = 0; bonusScore = 0; distanceTraveled = 0; coinsCollected = 0; gameTime = 0; gameOverReason = 'crash';
   bestScoreBeforeRun = bestScore;
   bestDiffBeforeRun = bestByDiff[diffKey()] || 0;
-  currentSpeed = 420 * getSpeedMult() * getLaneCfg().speedMult;
+  currentSpeed = 300 * getSpeedMult() * getLaneCfg().speedMult;
   playerHP = getRunMaxHP(); rapidFireTimer = 0; shieldTimer = 0; screenDamageFlash = 0; playerShootTimer = 0; playerFrozenTimer = 0;
   nitroTimer = 0; nitroCooldown = 0; driftScore = 0; driftStreak = 0; driftCombo = false; driftActive = false; musicTimer = 0;
   comboKills = 0; lastComboTier = 1;
@@ -2350,8 +2350,8 @@ function update(dt) {
   else { driftStreak = 0; driftCombo = false; }
 
   const laneCfg = getLaneCfg();
-  const dynamicSpeedCap = (950 * laneCfg.speedMult) + Math.floor(distanceTraveled / 10000) * 50;
-  let spd = Math.min((420 * getSpeedMult() * laneCfg.speedMult + distanceTraveled * 0.028) * (1.0 + (WEATHER_DEFS[currentWeather].speedBoost || 0)) * freezeFactor, dynamicSpeedCap);
+  const dynamicSpeedCap = (800 * laneCfg.speedMult) + Math.floor(distanceTraveled / 10000) * 20;
+  let spd = Math.min((300 * getSpeedMult() * laneCfg.speedMult + distanceTraveled * 0.018) * (1.0 + (WEATHER_DEFS[currentWeather].speedBoost || 0)) * freezeFactor, dynamicSpeedCap);
   if (nitroTimer > 0) spd *= 1.5;
   currentSpeed = spd;
   const roadTravel = currentSpeed * dt * slowMotionFactor;
@@ -2460,7 +2460,7 @@ function update(dt) {
 
   if (boss === null) {
     const minSpawnRate = Math.max(0.30, 0.45 - Math.floor(distanceTraveled / 20000) * 0.05);
-    if ((nextCarSpawnTimer -= dt * slowMotionFactor) <= 0) { spawnTrafficCar(); nextCarSpawnTimer = (Math.max(1.0 - (currentSpeed - 420) * 0.0012, minSpawnRate) + Math.random() * 0.4) * (gameMode === 'elimination' ? 0.7 : 1) * (1 / laneCfg.spawnRateMult); }
+    if ((nextCarSpawnTimer -= dt * slowMotionFactor) <= 0) { spawnTrafficCar(); nextCarSpawnTimer = (Math.max(1.0 - (currentSpeed - 300) * 0.0012, minSpawnRate) + Math.random() * 0.4) * (gameMode === 'elimination' ? 0.7 : 1) * (1 / laneCfg.spawnRateMult); }
     if ((nextCoinSpawnTimer -= dt * slowMotionFactor) <= 0) {
       const cl = pickFreeLane(-40);
       if (cl < 0) { nextCoinSpawnTimer = 0.25; }
